@@ -8,6 +8,7 @@ use crate::history::HistoryManager;
 pub struct App {
     pub state: GrainState,
     pub history_manager: HistoryManager,
+    pub audio_player: crate::audio::AudioPlayer,
 }
 
 impl Default for App {
@@ -45,6 +46,7 @@ impl App {
         Self {
             state,
             history_manager,
+            audio_player: crate::audio::AudioPlayer::new(),
         }
     }
 
@@ -63,6 +65,8 @@ impl App {
         self.state.audio.path = Some(path.clone());
         self.state.audio.status = AudioStatus::Loading;
         self.state.status_message = Some(format!("Analyzing audio: {}", file_name));
+
+        let _ = self.audio_player.load(&path);
 
         match crate::audio::load_or_analyze(&path, self.state.preview.fps) {
             Ok(analysis) => {
@@ -93,7 +97,11 @@ impl App {
             Action::Tick => {
                 if self.state.preview.is_playing {
                     if self.state.preview.total_frames > 0 {
+                        let prev_frame = self.state.preview.current_frame;
                         self.state.preview.current_frame = (self.state.preview.current_frame + 1) % self.state.preview.total_frames;
+                        if self.state.preview.current_frame < prev_frame {
+                            self.audio_player.restart();
+                        }
                     }
                 }
             }
@@ -182,6 +190,11 @@ impl App {
             }
             Action::TogglePlayback => {
                 self.state.preview.is_playing = !self.state.preview.is_playing;
+                if self.state.preview.is_playing {
+                    self.audio_player.play();
+                } else {
+                    self.audio_player.pause();
+                }
                 self.state.status_message = Some(if self.state.preview.is_playing {
                     "Playback: Playing".to_string()
                 } else {
@@ -259,6 +272,7 @@ impl App {
             }
             Action::TriggerGenerate => {
                 self.state.preview.is_playing = true;
+                self.audio_player.play();
                 self.state.preview.seed = self.state.preview.seed.wrapping_add(1);
                 self.state.prompt.generation_status = GenerationStatus::Generating;
                 self.state.status_message = Some(format!(

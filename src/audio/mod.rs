@@ -6,6 +6,9 @@ use sha2::{Digest, Sha256};
 
 pub mod analyzer;
 pub mod decoder;
+pub mod player;
+
+pub use player::AudioPlayer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct AudioFeatures {

@@ -3,15 +3,48 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::action::Action;
 use crate::state::{AudioStatus, GenerationStatus, GrainState, InputMode, PreviewStatus};
 
-#[derive(Debug, Default)]
+use crate::history::HistoryManager;
+
 pub struct App {
     pub state: GrainState,
+    pub history_manager: HistoryManager,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl App {
     pub fn new() -> Self {
+        Self::with_history_manager(HistoryManager::default())
+    }
+
+    pub fn with_history_manager(history_manager: HistoryManager) -> Self {
+        let mut state = GrainState::default();
+
+        if let Ok(history) = history_manager.load_history() {
+            if !history.versions.is_empty() {
+                state.prompt.total_versions = history.versions.len();
+                state.prompt.current_version = history.active_version;
+                state.versions.selected_index = history.active_version.saturating_sub(1);
+                state.versions.history = history.clone();
+
+                if let Some(active_meta) = history.versions.iter().find(|v| v.version == history.active_version) {
+                    state.prompt.active_prompt = active_meta.prompt.clone();
+                    state.preview.sketch_name = format!("sketch_v{}", active_meta.version);
+                    if let Ok(code) = history_manager.load_sketch_content(&active_meta.sketch_file) {
+                        state.preview.sketch_source = code;
+                        state.preview.status = PreviewStatus::Ready;
+                    }
+                }
+            }
+        }
+
         Self {
-            state: GrainState::default(),
+            state,
+            history_manager,
         }
     }
 
@@ -76,8 +109,51 @@ impl App {
             Action::ToggleVersions => {
                 self.state.mode = match self.state.mode {
                     InputMode::Versions => InputMode::Normal,
-                    _ => InputMode::Versions,
+                    _ => {
+                        if !self.state.versions.history.versions.is_empty() {
+                            self.state.versions.selected_index = self
+                                .state
+                                .versions
+                                .history
+                                .active_version
+                                .saturating_sub(1)
+                                .min(self.state.versions.history.versions.len() - 1);
+                        }
+                        InputMode::Versions
+                    }
                 };
+            }
+            Action::SelectPreviousVersion => {
+                if self.state.versions.selected_index > 0 {
+                    self.state.versions.selected_index -= 1;
+                }
+            }
+            Action::SelectNextVersion => {
+                if !self.state.versions.history.versions.is_empty()
+                    && self.state.versions.selected_index + 1 < self.state.versions.history.versions.len()
+                {
+                    self.state.versions.selected_index += 1;
+                }
+            }
+            Action::RollbackToSelectedVersion => {
+                if let Some(v_meta) = self.state.versions.history.versions.get(self.state.versions.selected_index) {
+                    return Some(Action::RollbackToVersion(v_meta.version));
+                }
+            }
+            Action::RollbackToVersion(v) => {
+                if let Some(v_meta) = self.state.versions.history.versions.iter().find(|m| m.version == v).cloned() {
+                    if let Ok(content) = self.history_manager.load_sketch_content(&v_meta.sketch_file) {
+                        self.state.preview.sketch_source = content;
+                        self.state.prompt.active_prompt = v_meta.prompt.clone();
+                        self.state.prompt.current_version = v_meta.version;
+                        self.state.preview.sketch_name = format!("sketch_v{}", v_meta.version);
+                        self.state.preview.status = PreviewStatus::Ready;
+                        self.state.mode = InputMode::Normal;
+                        self.state.versions.history.active_version = v_meta.version;
+                        let _ = self.history_manager.save_history(&self.state.versions.history);
+                        self.state.status_message = Some(format!("Rolled back to visual sketch v{}", v_meta.version));
+                    }
+                }
             }
             Action::TogglePlayback => {
                 self.state.preview.is_playing = !self.state.preview.is_playing;
@@ -174,12 +250,34 @@ impl App {
 
                 return Some(Action::GenerationCompleted { result, prompt });
             }
-            Action::GenerationCompleted { result, prompt: _ } => {
+            Action::GenerationCompleted { result, prompt } => {
                 match result {
                     Ok(new_code) => {
+                        let audio_hash = self.state.audio.path.as_ref().and_then(|p| {
+                            crate::audio::get_cache_path(p, self.state.preview.fps)
+                                .ok()
+                                .and_then(|cp| cp.file_stem().map(|s| s.to_string_lossy().to_string()))
+                        });
+
+                        if let Ok(meta) = self.history_manager.record_new_version(
+                            &prompt,
+                            &new_code,
+                            self.state.preview.seed,
+                            "Grain Generator",
+                            audio_hash.as_deref(),
+                        ) {
+                            if let Ok(hist) = self.history_manager.load_history() {
+                                self.state.versions.history = hist;
+                                self.state.versions.selected_index = self.state.versions.history.versions.len().saturating_sub(1);
+                            }
+                            self.state.prompt.current_version = meta.version;
+                            self.state.prompt.total_versions = self.state.versions.history.versions.len();
+                        } else {
+                            self.state.prompt.total_versions += 1;
+                            self.state.prompt.current_version = self.state.prompt.total_versions;
+                        }
+
                         self.state.preview.sketch_source = new_code;
-                        self.state.prompt.total_versions += 1;
-                        self.state.prompt.current_version = self.state.prompt.total_versions;
                         self.state.preview.sketch_name = format!("sketch_v{}", self.state.prompt.current_version);
                         self.state.prompt.generation_status = GenerationStatus::Ready;
                         self.state.preview.status = PreviewStatus::Ready;
@@ -266,7 +364,10 @@ impl App {
                 _ => None,
             },
             InputMode::Versions => match key.code {
-                KeyCode::Esc | KeyCode::Char('v') | KeyCode::Char('q') | KeyCode::Enter => {
+                KeyCode::Up | KeyCode::Char('k') => Some(Action::SelectPreviousVersion),
+                KeyCode::Down | KeyCode::Char('j') => Some(Action::SelectNextVersion),
+                KeyCode::Enter => Some(Action::RollbackToSelectedVersion),
+                KeyCode::Esc | KeyCode::Char('v') | KeyCode::Char('q') => {
                     Some(Action::ToggleVersions)
                 }
                 _ => None,
@@ -279,9 +380,17 @@ impl App {
 mod tests {
     use super::*;
 
+    fn create_test_app(test_name: &str) -> App {
+        let temp_dir = std::env::temp_dir().join(format!("grain_test_{}", test_name));
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        App::with_history_manager(HistoryManager::new(temp_dir))
+    }
+
     #[test]
     fn test_initial_state() {
-        let app = App::new();
+        let app = create_test_app("initial_state");
         assert_eq!(app.state.mode, InputMode::Normal);
         assert!(!app.state.should_quit);
         assert!(!app.state.preview.is_playing);
@@ -289,14 +398,14 @@ mod tests {
 
     #[test]
     fn test_quit_action() {
-        let mut app = App::new();
+        let mut app = create_test_app("quit_action");
         app.update(Action::Quit);
         assert!(app.state.should_quit);
     }
 
     #[test]
     fn test_playback_toggle() {
-        let mut app = App::new();
+        let mut app = create_test_app("playback_toggle");
         assert!(!app.state.preview.is_playing);
         app.update(Action::TogglePlayback);
         assert!(app.state.preview.is_playing);
@@ -306,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_prompt_editing_and_commit() {
-        let mut app = App::new();
+        let mut app = create_test_app("prompt_commit");
         app.update(Action::EnterPromptEdit);
         assert_eq!(app.state.mode, InputMode::EditingPrompt);
 
@@ -334,7 +443,7 @@ mod tests {
 
     #[test]
     fn test_load_audio_invalid_path() {
-        let mut app = App::new();
+        let mut app = create_test_app("audio_invalid");
         app.update(Action::LoadAudio(PathBuf::from("non_existent_audio.wav")));
         assert_eq!(app.state.audio.path, Some(PathBuf::from("non_existent_audio.wav")));
         match app.state.audio.status {
@@ -345,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_tick_advances_frame_when_playing() {
-        let mut app = App::new();
+        let mut app = create_test_app("tick_playing");
         app.state.preview.is_playing = true;
         app.state.preview.total_frames = 100;
         app.state.preview.current_frame = 0;

@@ -125,6 +125,14 @@ impl Default for PromptInfo {
     }
 }
 
+use crate::history::GenerationHistory;
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct VersionsState {
+    pub history: GenerationHistory,
+    pub selected_index: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrainState {
     pub should_quit: bool,
@@ -132,6 +140,7 @@ pub struct GrainState {
     pub audio: AudioInfo,
     pub preview: PreviewInfo,
     pub prompt: PromptInfo,
+    pub versions: VersionsState,
     pub audio_input_buffer: String,
     pub status_message: Option<String>,
     pub terminal_size: (u16, u16),
@@ -145,6 +154,7 @@ impl Default for GrainState {
             audio: AudioInfo::default(),
             preview: PreviewInfo::default(),
             prompt: PromptInfo::default(),
+            versions: VersionsState::default(),
             audio_input_buffer: String::new(),
             status_message: Some("Ready. Press '?' for help.".to_string()),
             terminal_size: (80, 24),

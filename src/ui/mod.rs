@@ -425,38 +425,62 @@ fn render_help_modal(frame: &mut Frame, area: Rect) {
 }
 
 fn render_versions_modal(frame: &mut Frame, area: Rect, state: &GrainState) {
-    let popup_area = centered_rect(60, 50, area);
+    let popup_area = centered_rect(70, 60, area);
     frame.render_widget(Clear, popup_area);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
         .border_style(Style::default().fg(Color::Blue))
-        .title(" Sketch Version History ");
+        .title(" Sketch Version History (Instant Rollback) ");
 
     let mut text = vec![
-        Line::from(Span::styled("Saved Versions", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))),
+        Line::from(vec![
+            Span::styled("Available Visual Generations", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
+            Span::raw("  "),
+            Span::styled("(↑/↓ Navigate • Enter Instant Rollback • Esc Close)", Style::default().fg(Color::DarkGray)),
+        ]),
         Line::from(""),
     ];
 
-    if state.prompt.total_versions == 0 {
+    if state.versions.history.versions.is_empty() {
         text.push(Line::from(Span::styled("  No generated versions yet. Press 'g' to generate a sketch.", Style::default().fg(Color::DarkGray))));
     } else {
-        for v in 1..=state.prompt.total_versions {
-            let marker = if v == state.prompt.current_version { "► " } else { "  " };
-            let style = if v == state.prompt.current_version {
+        for (idx, v_meta) in state.versions.history.versions.iter().enumerate() {
+            let is_selected = idx == state.versions.selected_index;
+            let is_active = v_meta.version == state.prompt.current_version;
+
+            let cursor = if is_selected { "▶ " } else { "  " };
+            let active_badge = if is_active { " [ACTIVE]" } else { "" };
+
+            let base_style = if is_selected {
+                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else if is_active {
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
+
+            let prompt_preview = if v_meta.prompt.len() > 40 {
+                format!("{}...", &v_meta.prompt[..37])
+            } else {
+                v_meta.prompt.clone()
+            };
+
             text.push(Line::from(vec![
-                Span::styled(format!("{}{:03} — sketch_v{} (Prompt: \"{}\")", marker, v, v, state.prompt.active_prompt), style),
+                Span::styled(
+                    format!(
+                        "{}{:03} • sketch_v{} — \"{}\" (Seed: {}){}",
+                        cursor, v_meta.version, v_meta.version, prompt_preview, v_meta.seed, active_badge
+                    ),
+                    base_style,
+                ),
             ]));
         }
     }
 
     text.push(Line::from(""));
-    text.push(Line::from(Span::styled("Press 'Esc' or 'v' to close", Style::default().fg(Color::DarkGray))));
+    text.push(Line::from(Span::styled("Press 'Enter' to rollback to selected version, 'Esc' or 'v' to exit", Style::default().fg(Color::DarkGray))));
 
     let p = Paragraph::new(text).block(block);
     frame.render_widget(p, popup_area);

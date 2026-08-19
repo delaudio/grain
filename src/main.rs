@@ -1,5 +1,6 @@
 mod action;
 mod app;
+mod audio;
 mod cli;
 mod state;
 mod terminal;

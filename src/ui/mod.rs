@@ -203,15 +203,36 @@ fn render_preview_area(frame: &mut Frame, area: Rect, state: &GrainState) {
         Span::styled("                                 │", Style::default().fg(Color::DarkGray)),
     ]));
 
-    // Visual reaction simulation bar
-    let phase = (state.preview.current_frame as f64 * 0.1).sin();
-    let amp_bars = ((((phase + 1.0) / 2.0) * 20.0).round() as usize).min(20);
-    let bar_repr = "█".repeat(amp_bars) + &"░".repeat(20 - amp_bars);
+    use crate::audio::AudioFeatures;
+
+    let features = if let Some(ref analysis) = state.audio.analysis {
+        analysis.get_features_at_frame(state.preview.current_frame)
+    } else {
+        let phase = (((state.preview.current_frame as f64 * 0.1).sin() + 1.0) / 2.0) as f32;
+        AudioFeatures {
+            amplitude: phase,
+            low: phase * 0.8,
+            mid: phase * 0.6,
+            high: phase * 0.4,
+        }
+    };
+
+    let make_bar = |val: f32, len: usize| -> String {
+        let filled = ((val.clamp(0.0, 1.0) * len as f32).round() as usize).min(len);
+        "█".repeat(filled) + &"░".repeat(len - filled)
+    };
 
     lines.push(Line::from(vec![
-        Span::styled("│  Audio Reactivity: [", Style::default().fg(Color::DarkGray)),
-        Span::styled(bar_repr, Style::default().fg(Color::Magenta)),
-        Span::styled("]         │", Style::default().fg(Color::DarkGray)),
+        Span::styled("│  Reactivity: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("AMP ", Style::default().fg(Color::White)),
+        Span::styled(format!("[{}] ", make_bar(features.amplitude, 6)), Style::default().fg(Color::Magenta)),
+        Span::styled("LOW ", Style::default().fg(Color::Cyan)),
+        Span::styled(format!("[{}] ", make_bar(features.low, 6)), Style::default().fg(Color::Cyan)),
+        Span::styled("MID ", Style::default().fg(Color::Yellow)),
+        Span::styled(format!("[{}] ", make_bar(features.mid, 6)), Style::default().fg(Color::Yellow)),
+        Span::styled("HI ", Style::default().fg(Color::Green)),
+        Span::styled(format!("[{}]", make_bar(features.high, 6)), Style::default().fg(Color::Green)),
+        Span::styled(" │", Style::default().fg(Color::DarkGray)),
     ]));
     lines.push(Line::from(vec![
         Span::styled("└────────────────────────────────────────────────────────┘", Style::default().fg(Color::DarkGray)),

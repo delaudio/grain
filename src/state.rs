@@ -10,6 +10,8 @@ pub enum InputMode {
     Versions,
 }
 
+use crate::audio::AudioAnalysis;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum AudioStatus {
@@ -20,13 +22,14 @@ pub enum AudioStatus {
     Error(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AudioInfo {
     pub path: Option<PathBuf>,
     pub duration_ms: u64,
     pub sample_rate: u32,
     pub channels: u16,
     pub status: AudioStatus,
+    pub analysis: Option<AudioAnalysis>,
 }
 
 impl Default for AudioInfo {
@@ -37,6 +40,7 @@ impl Default for AudioInfo {
             sample_rate: 44100,
             channels: 2,
             status: AudioStatus::None,
+            analysis: None,
         }
     }
 }
@@ -113,7 +117,7 @@ impl Default for PromptInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GrainState {
     pub should_quit: bool,
     pub mode: InputMode,

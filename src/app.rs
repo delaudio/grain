@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::action::Action;
-use crate::state::{AudioInfo, AudioStatus, GenerationStatus, GrainState, InputMode, PreviewStatus};
+use crate::state::{AudioStatus, GenerationStatus, GrainState, InputMode, PreviewStatus};
 
 #[derive(Debug, Default)]
 pub struct App {
@@ -26,15 +26,30 @@ impl App {
             .file_name()
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        
-        self.state.audio = AudioInfo {
-            path: Some(path),
-            duration_ms: 120_000, // placeholder duration
-            sample_rate: 44100,
-            channels: 2,
-            status: AudioStatus::Ready,
-        };
-        self.state.status_message = Some(format!("Loaded audio: {}", file_name));
+
+        self.state.audio.path = Some(path.clone());
+        self.state.audio.status = AudioStatus::Loading;
+        self.state.status_message = Some(format!("Analyzing audio: {}", file_name));
+
+        match crate::audio::load_or_analyze(&path, self.state.preview.fps) {
+            Ok(analysis) => {
+                self.state.audio.duration_ms = analysis.duration_ms;
+                self.state.audio.sample_rate = analysis.sample_rate;
+                self.state.audio.channels = analysis.channels;
+                self.state.preview.total_frames = analysis.total_frames();
+                self.state.audio.status = AudioStatus::Ready;
+                self.state.status_message = Some(format!(
+                    "Ready: {} ({:.1}s)",
+                    file_name,
+                    analysis.duration_ms as f64 / 1000.0
+                ));
+                self.state.audio.analysis = Some(analysis);
+            }
+            Err(err) => {
+                self.state.audio.status = AudioStatus::Error(err.to_string());
+                self.state.status_message = Some(format!("Audio error: {}", err));
+            }
+        }
     }
 
     pub fn update(&mut self, action: Action) -> Option<Action> {
@@ -292,11 +307,14 @@ mod tests {
     }
 
     #[test]
-    fn test_load_audio() {
+    fn test_load_audio_invalid_path() {
         let mut app = App::new();
-        app.update(Action::LoadAudio(PathBuf::from("test.wav")));
-        assert_eq!(app.state.audio.path, Some(PathBuf::from("test.wav")));
-        assert_eq!(app.state.audio.status, AudioStatus::Ready);
+        app.update(Action::LoadAudio(PathBuf::from("non_existent_audio.wav")));
+        assert_eq!(app.state.audio.path, Some(PathBuf::from("non_existent_audio.wav")));
+        match app.state.audio.status {
+            AudioStatus::Error(_) => {}
+            _ => panic!("Expected audio status to be Error for non-existent file"),
+        }
     }
 
     #[test]

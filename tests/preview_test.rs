@@ -21,6 +21,8 @@ fn test_preview_engine_renders_ansi_backend() {
 
     assert_eq!(res.frame, 10);
     assert!(!lines.is_empty());
+    assert!(res.cells.is_some());
+    assert!(!res.cells.unwrap().is_empty());
 }
 
 #[test]

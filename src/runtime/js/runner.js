@@ -1,6 +1,7 @@
 /**
  * Grain Headless p5.js Runtime Runner
- * Executes p5.js sketches deterministically with frame-aligned audio features.
+ * Executes p5.js sketches deterministically with frame-aligned audio features
+ * and produces TrueColor character cell grids.
  */
 
 function createPRNG(seed) {
@@ -55,6 +56,23 @@ function createNoise(seed) {
     );
     return (res + 1) / 2;
   };
+}
+
+function hsbToRgb(h, s, v) {
+  h = ((h % 360) + 360) % 360;
+  s = Math.max(0, Math.min(100, s)) / 100;
+  v = Math.max(0, Math.min(100, v)) / 100;
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; b = 0; }
+  else if (h < 120) { r = x; g = c; b = 0; }
+  else if (h < 180) { r = 0; g = c; b = x; }
+  else if (h < 240) { r = 0; g = x; b = c; }
+  else if (h < 300) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
 }
 
 class P5Vector {
@@ -151,8 +169,15 @@ class HeadlessP5 {
     this.seed = seed || 42;
     this.prng = createPRNG(this.seed);
     this.noiseGen = createNoise(this.seed);
+
+    this.colorModeType = 'rgb'; // 'rgb' or 'hsb'
+    this.max1 = 255;
+    this.max2 = 255;
+    this.max3 = 255;
+    this.maxA = 1;
+
     this.currentFill = [255, 255, 255, 1];
-    this.currentStroke = [0, 0, 0, 1];
+    this.currentStroke = [0, 200, 255, 1];
     this.doFill = true;
     this.doStroke = true;
     this.strokeWidth = 1;
@@ -185,6 +210,62 @@ class HeadlessP5 {
     if (typeof h === 'number') this.height = h;
   }
 
+  colorMode(mode, max1 = 255, max2 = 255, max3 = 255, maxA = 1) {
+    const m = String(mode).toLowerCase();
+    if (m === 'hsb') {
+      this.colorModeType = 'hsb';
+      this.max1 = max1 || 360;
+      this.max2 = max2 || 100;
+      this.max3 = max3 || 100;
+      this.maxA = maxA || 1;
+    } else {
+      this.colorModeType = 'rgb';
+      this.max1 = max1 || 255;
+      this.max2 = max2 || 255;
+      this.max3 = max3 || 255;
+      this.maxA = maxA || 1;
+    }
+  }
+
+  parseColor(r, g, b, a) {
+    if (Array.isArray(r)) {
+      return this.parseColor(r[0], r[1], r[2], r[3]);
+    }
+    if (typeof r === 'string') {
+      // Hex or named fallback
+      return [200, 200, 200, 1];
+    }
+    if (typeof r === 'number' && g === undefined) {
+      // Grayscale
+      const val = Math.max(0, Math.min(255, Math.round((r / this.max1) * 255)));
+      return [val, val, val, 1];
+    }
+    if (typeof r === 'number' && typeof g === 'number' && b === undefined) {
+      // Grayscale + Alpha
+      const val = Math.max(0, Math.min(255, Math.round((r / this.max1) * 255)));
+      const alpha = g / (this.max2 || 1);
+      return [val, val, val, alpha];
+    }
+
+    const valR = r !== undefined ? r : 255;
+    const valG = g !== undefined ? g : 255;
+    const valB = b !== undefined ? b : 255;
+    const valA = a !== undefined ? a / this.maxA : 1;
+
+    if (this.colorModeType === 'hsb') {
+      const h = (valR / this.max1) * 360;
+      const s = (valG / this.max2) * 100;
+      const v = (valB / this.max3) * 100;
+      const rgb = hsbToRgb(h, s, v);
+      return [rgb[0], rgb[1], rgb[2], valA];
+    } else {
+      const red = Math.max(0, Math.min(255, Math.round((valR / this.max1) * 255)));
+      const green = Math.max(0, Math.min(255, Math.round((valG / this.max2) * 255)));
+      const blue = Math.max(0, Math.min(255, Math.round((valB / this.max3) * 255)));
+      return [red, green, blue, valA];
+    }
+  }
+
   randomSeed(s) {
     this.prng = createPRNG(s || 42);
   }
@@ -207,12 +288,11 @@ class HeadlessP5 {
     return new P5Vector(x, y, z);
   }
 
-  colorMode(mode, max1 = 255, max2 = 255, max3 = 255, maxA = 1) {}
   rectMode(mode) {}
   ellipseMode(mode) {}
 
-  color(r, g = r, b = r, a = 1) {
-    return [r, g, b, a];
+  color(r, g, b, a) {
+    return this.parseColor(r, g, b, a);
   }
 
   red(c) { return Array.isArray(c) ? c[0] : 255; }
@@ -285,22 +365,23 @@ class HeadlessP5 {
   max(...args) { return Math.max(...args); }
   pow(n, e) { return Math.pow(n, e); }
 
-  background(r, g = r, b = r, a = 1) {
-    this.commands.push({ type: 'background', color: [r, g, b, a] });
+  background(r, g, b, a) {
+    const col = this.parseColor(r, g, b, a);
+    this.commands.push({ type: 'background', color: col });
   }
 
-  fill(r, g = r, b = r, a = 1) {
+  fill(r, g, b, a) {
     this.doFill = true;
-    this.currentFill = [r, g, b, a];
+    this.currentFill = this.parseColor(r, g, b, a);
   }
 
   noFill() {
     this.doFill = false;
   }
 
-  stroke(r, g = r, b = r, a = 1) {
+  stroke(r, g, b, a) {
     this.doStroke = true;
-    this.currentStroke = [r, g, b, a];
+    this.currentStroke = this.parseColor(r, g, b, a);
   }
 
   noStroke() {
@@ -334,7 +415,12 @@ class HeadlessP5 {
   }
 
   point(x, y) {
-    this.circle(x, y, 2);
+    this.commands.push({
+      type: 'point',
+      x: x + this.transform.x,
+      y: y + this.transform.y,
+      stroke: this.doStroke ? this.currentStroke : this.currentFill,
+    });
   }
 
   rect(x, y, w, h) {
@@ -441,17 +527,32 @@ class HeadlessP5 {
   }
 }
 
-function renderAsciiPreview(commands, width, height, termCols = 54, termRows = 12) {
-  const grid = Array.from({ length: termRows }, () => Array(termCols).fill(' '));
+function renderCellsAndAscii(commands, width, height, termCols = 54, termRows = 12) {
   const charRamp = " .:-=+*#%@";
 
-  // Render circles and rects onto low-res terminal character grid
+  // Grid of cells with RGB color
+  const cellGrid = Array.from({ length: termRows }, () =>
+    Array.from({ length: termCols }, () => ({ symbol: ' ', r: 0, g: 0, b: 0 }))
+  );
+
+  function setCell(c, r, symbol, color) {
+    if (r >= 0 && r < termRows && c >= 0 && c < termCols) {
+      cellGrid[r][c].symbol = symbol;
+      if (color) {
+        cellGrid[r][c].r = color[0] || 0;
+        cellGrid[r][c].g = color[1] || 0;
+        cellGrid[r][c].b = color[2] || 0;
+      }
+    }
+  }
+
   for (const cmd of commands) {
     if (cmd.type === 'circle') {
       const col = Math.floor((cmd.x / width) * termCols);
       const row = Math.floor((cmd.y / height) * termRows);
       const radiusCols = Math.max(1, Math.floor((cmd.radius / width) * termCols));
       const radiusRows = Math.max(1, Math.floor((cmd.radius / height) * termRows * 0.5));
+      const color = cmd.fill || cmd.stroke || [200, 200, 200];
 
       for (let r = Math.max(0, row - radiusRows); r <= Math.min(termRows - 1, row + radiusRows); r++) {
         for (let c = Math.max(0, col - radiusCols); c <= Math.min(termCols - 1, col + radiusCols); c++) {
@@ -459,9 +560,9 @@ function renderAsciiPreview(commands, width, height, termCols = 54, termRows = 1
           const dy = (r - row) / radiusRows;
           const distSq = dx * dx + dy * dy;
           if (distSq <= 1.0) {
-            const intensity = 1.0 - distSq * 0.5;
+            const intensity = 1.0 - distSq * 0.4;
             const charIdx = Math.min(charRamp.length - 1, Math.floor(intensity * (charRamp.length - 1)));
-            grid[r][c] = charRamp[charIdx];
+            setCell(c, r, charRamp[charIdx], color);
           }
         }
       }
@@ -470,16 +571,52 @@ function renderAsciiPreview(commands, width, height, termCols = 54, termRows = 1
       const r1 = Math.max(0, Math.floor((cmd.y / height) * termRows));
       const c2 = Math.min(termCols - 1, Math.floor(((cmd.x + cmd.w) / width) * termCols));
       const r2 = Math.min(termRows - 1, Math.floor(((cmd.y + cmd.h) / height) * termRows));
+      const color = cmd.fill || cmd.stroke || [180, 180, 180];
 
       for (let r = r1; r <= r2; r++) {
         for (let c = c1; c <= c2; c++) {
-          grid[r][c] = '#';
+          setCell(c, r, '#', color);
+        }
+      }
+    } else if (cmd.type === 'point') {
+      const c = Math.floor((cmd.x / width) * termCols);
+      const r = Math.floor((cmd.y / height) * termRows);
+      setCell(c, r, '*', cmd.stroke || [255, 255, 255]);
+    } else if (cmd.type === 'line') {
+      // Bresenham's line algorithm on terminal grid
+      const c0 = Math.floor((cmd.x1 / width) * termCols);
+      const r0 = Math.floor((cmd.y1 / height) * termRows);
+      const c1 = Math.floor((cmd.x2 / width) * termCols);
+      const r1 = Math.floor((cmd.y2 / height) * termRows);
+      const color = cmd.stroke || [100, 200, 255];
+
+      let dx = Math.abs(c1 - c0);
+      let dy = Math.abs(r1 - r0);
+      let sx = c0 < c1 ? 1 : -1;
+      let sy = r0 < r1 ? 1 : -1;
+      let err = dx - dy;
+
+      let curX = c0;
+      let curY = r0;
+
+      while (true) {
+        setCell(curX, curY, '+', color);
+        if (curX === c1 && curY === r1) break;
+        let e2 = 2 * err;
+        if (e2 > -dy) {
+          err -= dy;
+          curX += sx;
+        }
+        if (e2 < dx) {
+          err += dx;
+          curY += sy;
         }
       }
     }
   }
 
-  return grid.map(row => row.join('')).join('\n');
+  const asciiArt = cellGrid.map(row => row.map(cell => cell.symbol).join('')).join('\n');
+  return { asciiArt, cells: cellGrid };
 }
 
 function run() {
@@ -524,7 +661,7 @@ function run() {
         p5.PI, p5.TWO_PI, p5.TAU, p5.HALF_PI, p5.QUARTER_PI
       );
 
-      const asciiArt = renderAsciiPreview(
+      const { asciiArt, cells } = renderCellsAndAscii(
         p5.commands,
         context.width,
         context.height,
@@ -538,6 +675,7 @@ function run() {
         width: context.width,
         height: context.height,
         ascii_art: asciiArt,
+        cells: cells,
         draw_commands_count: p5.commands.length
       };
 

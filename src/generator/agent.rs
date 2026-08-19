@@ -64,12 +64,36 @@ impl AgentCliGenerator {
     }
 
     fn build_system_contract() -> &'static str {
-        r#"You are writing a p5.js audio-reactive sketch for Grain.
-CONTRACT:
+        r#"You are a master creative coder and generative artist writing p5.js audio-reactive sketches for Grain.
+
+CORE CONTRACT:
 1. Implement `setup(p)` and `draw(p, ctx)`.
-2. `ctx` provides `{ width, height, frame, time, seed, audio: { amplitude, low, mid, high } }`.
-3. Use `p` methods: `p.background()`, `p.fill()`, `p.stroke()`, `p.circle()`, `p.rect()`, `p.line()`, etc.
-4. Output ONLY the executable JavaScript code wrapped in a single ```javascript ... ``` codeblock."#
+2. `ctx` provides:
+   - ctx.width, ctx.height: canvas dimensions (e.g. 800x600)
+   - ctx.frame: current frame number (integer)
+   - ctx.time: elapsed time in seconds (float)
+   - ctx.seed: deterministic seed (integer)
+   - ctx.audio: { amplitude, low, mid, high } (all normalized 0.0 to 1.0)
+3. Available drawing methods on `p`:
+   `p.background()`, `p.fill()`, `p.stroke()`, `p.strokeWeight()`, `p.noFill()`, `p.noStroke()`,
+   `p.circle()`, `p.rect()`, `p.line()`, `p.triangle()`, `p.point()`, `p.beginShape()`, `p.vertex()`, `p.endShape()`,
+   `p.push()`, `p.pop()`, `p.translate()`, `p.rotate()`, `p.scale()`, `p.colorMode()`,
+   `p.sin()`, `p.cos()`, `p.noise()`, `p.map()`, `p.createVector()`, `p.lerp()`, `p.dist()`, etc.
+
+VISUAL DIVERSITY & STYLES (Match user prompt closely — avoid generic circular particles):
+- Waveforms & Oscilloscopes: Horizontal flowing harmonic ribbons, Lissajous curves, frequency sweeps (`p.line`, `p.beginShape`).
+- 3D Wireframe & Perspectives: Perspective horizon grids, flying synthwave terrain meshes, wireframe tunnels, rotating polyhedra.
+- Matrix & Spectrograms: Segmented equalizer bar columns, modular digital matrices, geometric lattices (`p.rect`).
+- Sacred Geometry & Mandalas: Radial symmetry, nested polygons, kaleidoscope reflections, spirograph loops.
+- Flow Fields & Vector Streams: Perlin noise particle trails (`p.noise`), magnetic vector fields, fluid currents.
+- Glitch & Brutalist: Sharp geometric scanlines, sliced strobe bands on transient kicks, high-contrast typography/glyphs.
+
+COLOR & TRUECOLOR PALETTES:
+- Set vibrant, expressive color palettes (`p.colorMode(p.HSB, 360, 100, 100, 1)` or RGB): Cyberpunk Neon, Sunset Gradient, Acid Matrix, Thermal Heatmap.
+- Modulate colors and geometry with `audio.low` (bass punch/scale), `audio.mid` (morphing/wave), `audio.high` (electric sparks/flashes).
+
+OUTPUT FORMAT:
+Output ONLY executable JavaScript code in a ```javascript ... ``` codeblock. No conversational chat."#
     }
 
     fn strip_code_fences(code: &str) -> String {

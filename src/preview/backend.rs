@@ -24,9 +24,22 @@ impl PreviewBackend for AnsiPreviewBackend {
 
     fn render_frame(&self, result: &FrameRenderResult, area: Rect) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
+        let max_lines = area.height.saturating_sub(2) as usize;
 
-        if let Some(ref ascii) = result.ascii_art {
-            let max_lines = area.height.saturating_sub(2) as usize;
+        if let Some(ref cells) = result.cells {
+            for row in cells.iter().take(max_lines) {
+                let mut spans = Vec::new();
+                for cell in row {
+                    let is_bright = cell.r > 180 || cell.g > 180 || cell.b > 180;
+                    let mut style = Style::default().fg(Color::Rgb(cell.r, cell.g, cell.b));
+                    if is_bright {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    spans.push(Span::styled(cell.symbol.clone(), style));
+                }
+                lines.push(Line::from(spans));
+            }
+        } else if let Some(ref ascii) = result.ascii_art {
             for row in ascii.lines().take(max_lines) {
                 let mut spans = Vec::new();
                 for ch in row.chars() {
@@ -62,11 +75,23 @@ impl PreviewBackend for RattyTerminalBackend {
     }
 
     fn render_frame(&self, result: &FrameRenderResult, area: Rect) -> Vec<Line<'static>> {
-        // High fidelity rendering with color gradients and glow effects
         let mut lines = Vec::new();
+        let max_lines = area.height.saturating_sub(2) as usize;
 
-        if let Some(ref ascii) = result.ascii_art {
-            let max_lines = area.height.saturating_sub(2) as usize;
+        if let Some(ref cells) = result.cells {
+            for row in cells.iter().take(max_lines) {
+                let mut spans = Vec::new();
+                for cell in row {
+                    let is_bright = cell.r > 200 || cell.g > 200 || cell.b > 200;
+                    let mut style = Style::default().fg(Color::Rgb(cell.r, cell.g, cell.b));
+                    if is_bright {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    spans.push(Span::styled(cell.symbol.clone(), style));
+                }
+                lines.push(Line::from(spans));
+            }
+        } else if let Some(ref ascii) = result.ascii_art {
             for row in ascii.lines().take(max_lines) {
                 let mut spans = Vec::new();
                 for ch in row.chars() {

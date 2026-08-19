@@ -23,6 +23,7 @@ struct RunnerResponse {
     width: Option<u32>,
     height: Option<u32>,
     ascii_art: Option<String>,
+    cells: Option<Vec<Vec<crate::runtime::TerminalCell>>>,
     draw_commands_count: Option<usize>,
     error: Option<RunnerErrorResponse>,
 }
@@ -50,7 +51,7 @@ pub fn evaluate_frame(
         .stderr(Stdio::piped())
         .spawn()
     {
-        Ok(child) => child,
+        Ok(c) => c,
         Err(e) => {
             // If node is not found, fallback to pure deterministic Rust evaluation
             return fallback_evaluate_frame(source, context, term_cols, term_rows, e);
@@ -64,39 +65,31 @@ pub fn evaluate_frame(
         term_rows,
     };
 
-    let input_json = serde_json::to_string(&req).map_err(|e| RuntimeDiagnostic {
-        message: format!("Serialization error: {}", e),
+    let req_json = serde_json::to_string(&req).map_err(|e| RuntimeDiagnostic {
+        message: format!("Failed to serialize request: {}", e),
         line: None,
         column: None,
         stack: None,
     })?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(input_json.as_bytes());
+        stdin.write_all(req_json.as_bytes()).map_err(|e| RuntimeDiagnostic {
+            message: format!("Failed to write to runner stdin: {}", e),
+            line: None,
+            column: None,
+            stack: None,
+        })?;
     }
 
     let output = child.wait_with_output().map_err(|e| RuntimeDiagnostic {
-        message: format!("Process execution error: {}", e),
+        message: format!("Failed to wait for runner process: {}", e),
         line: None,
         column: None,
         stack: None,
     })?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(RuntimeDiagnostic {
-            message: if stderr.is_empty() {
-                "Runtime execution failed".to_string()
-            } else {
-                stderr
-            },
-            line: None,
-            column: None,
-            stack: None,
-        });
-    }
-
-    let res: RunnerResponse = serde_json::from_slice(&output.stdout).map_err(|e| RuntimeDiagnostic {
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let res: RunnerResponse = serde_json::from_str(&stdout_str).map_err(|e| RuntimeDiagnostic {
         message: format!("Failed to parse runner output: {}", e),
         line: None,
         column: None,
@@ -109,6 +102,7 @@ pub fn evaluate_frame(
             width: res.width.unwrap_or(context.width),
             height: res.height.unwrap_or(context.height),
             ascii_art: res.ascii_art,
+            cells: res.cells,
             draw_commands_count: res.draw_commands_count.unwrap_or(0),
         })
     } else if let Some(err) = res.error {
@@ -167,6 +161,7 @@ fn fallback_evaluate_frame(
         width: context.width,
         height: context.height,
         ascii_art: Some(ascii_art),
+        cells: None,
         draw_commands_count: 1,
     })
 }

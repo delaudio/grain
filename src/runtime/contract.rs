@@ -32,6 +32,14 @@ impl std::fmt::Display for RuntimeDiagnostic {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalCell {
+    pub symbol: String,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FrameRenderResult {
     pub frame: usize,
@@ -39,6 +47,8 @@ pub struct FrameRenderResult {
     pub height: u32,
     /// Encoded ASCII or pixel representation of the rendered frame
     pub ascii_art: Option<String>,
+    /// High-fidelity TrueColor cell-by-cell RGB grid
+    pub cells: Option<Vec<Vec<TerminalCell>>>,
     /// Visual entities / shapes drawn during the frame
     pub draw_commands_count: usize,
 }

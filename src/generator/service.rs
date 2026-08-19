@@ -1,0 +1,67 @@
+use std::sync::Arc;
+use crate::audio::AudioFeatures;
+use crate::generator::llm::LlmGenerator;
+use crate::generator::mock::MockGenerator;
+use crate::generator::provider::SketchGenerator;
+use crate::runtime::{evaluate_frame, GrainContext};
+
+pub struct GenerationService {
+    generator: Arc<dyn SketchGenerator>,
+}
+
+impl GenerationService {
+    pub fn new(generator: Arc<dyn SketchGenerator>) -> Self {
+        Self { generator }
+    }
+
+    pub fn generate_and_validate(&self, prompt: &str, seed: u64) -> Result<String, String> {
+        let code = self.generator.generate(prompt, seed)?;
+        self.validate_sketch(&code, seed)?;
+        Ok(code)
+    }
+
+    pub fn revise_and_validate(
+        &self,
+        prompt: &str,
+        current_sketch: &str,
+        seed: u64,
+    ) -> Result<String, String> {
+        let code = self.generator.revise(prompt, current_sketch, seed)?;
+        self.validate_sketch(&code, seed)?;
+        Ok(code)
+    }
+
+    fn validate_sketch(&self, code: &str, seed: u64) -> Result<(), String> {
+        let dummy_ctx = GrainContext {
+            width: 800,
+            height: 600,
+            frame: 0,
+            time: 0.0,
+            seed,
+            audio: AudioFeatures {
+                amplitude: 0.5,
+                low: 0.5,
+                mid: 0.5,
+                high: 0.5,
+            },
+        };
+
+        match evaluate_frame(code, &dummy_ctx, 40, 10) {
+            Ok(_) => Ok(()),
+            Err(diag) => Err(format!("Generated sketch failed runtime validation: {}", diag)),
+        }
+    }
+}
+
+pub fn create_default_generator() -> GenerationService {
+    if let Ok(key) = std::env::var("GRAIN_AI_KEY").or_else(|_| std::env::var("OPENAI_API_KEY")) {
+        if !key.trim().is_empty() {
+            let base_url = std::env::var("OPENAI_BASE_URL").ok();
+            let model = std::env::var("GRAIN_LLM_MODEL").ok();
+            let llm = LlmGenerator::new(key, base_url, model);
+            return GenerationService::new(Arc::new(llm));
+        }
+    }
+
+    GenerationService::new(Arc::new(MockGenerator::new()))
+}

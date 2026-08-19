@@ -158,15 +158,41 @@ impl App {
             }
             Action::TriggerGenerate => {
                 self.state.prompt.generation_status = GenerationStatus::Generating;
-                self.state.prompt.total_versions += 1;
-                self.state.prompt.current_version = self.state.prompt.total_versions;
-                self.state.preview.status = PreviewStatus::Ready;
-                self.state.preview.sketch_name = format!("sketch_v{}", self.state.prompt.current_version);
-                self.state.prompt.generation_status = GenerationStatus::Ready;
-                self.state.status_message = Some(format!(
-                    "Generated sketch version {}",
-                    self.state.prompt.current_version
-                ));
+                self.state.status_message = Some("Generating audio-reactive visual...".to_string());
+
+                let prompt = self.state.prompt.active_prompt.clone();
+                let seed = self.state.preview.seed;
+                let is_revision = self.state.prompt.total_versions > 0;
+                let current_sketch = self.state.preview.sketch_source.clone();
+
+                let service = crate::generator::create_default_generator();
+                let result = if is_revision {
+                    service.revise_and_validate(&prompt, &current_sketch, seed)
+                } else {
+                    service.generate_and_validate(&prompt, seed)
+                };
+
+                return Some(Action::GenerationCompleted { result, prompt });
+            }
+            Action::GenerationCompleted { result, prompt: _ } => {
+                match result {
+                    Ok(new_code) => {
+                        self.state.preview.sketch_source = new_code;
+                        self.state.prompt.total_versions += 1;
+                        self.state.prompt.current_version = self.state.prompt.total_versions;
+                        self.state.preview.sketch_name = format!("sketch_v{}", self.state.prompt.current_version);
+                        self.state.prompt.generation_status = GenerationStatus::Ready;
+                        self.state.preview.status = PreviewStatus::Ready;
+                        self.state.status_message = Some(format!(
+                            "Active visual: sketch_v{} (Prompt: \"{}\")",
+                            self.state.prompt.current_version, self.state.prompt.active_prompt
+                        ));
+                    }
+                    Err(err) => {
+                        self.state.prompt.generation_status = GenerationStatus::Failed(err.clone());
+                        self.state.status_message = Some(format!("Generation error: {}", err));
+                    }
+                }
             }
             Action::EnterOpenAudio => {
                 self.state.mode = InputMode::OpeningAudio;
@@ -294,13 +320,13 @@ mod tests {
         assert_eq!(app.state.prompt.input_buffer, "new");
         assert_eq!(app.state.prompt.cursor_position, 3);
 
-        let next = app.update(Action::CommitPrompt);
+        let mut next = app.update(Action::CommitPrompt);
         assert_eq!(app.state.mode, InputMode::Normal);
         assert_eq!(app.state.prompt.active_prompt, "new");
         assert_eq!(next, Some(Action::TriggerGenerate));
 
-        if let Some(act) = next {
-            app.update(act);
+        while let Some(act) = next {
+            next = app.update(act);
         }
         assert_eq!(app.state.prompt.current_version, 1);
         assert_eq!(app.state.preview.sketch_name, "sketch_v1");

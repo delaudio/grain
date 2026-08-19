@@ -18,6 +18,10 @@ pub enum Action {
     PromptCursorRight,
     CommitPrompt,
     TriggerGenerate,
+    GenerationCompleted {
+        result: Result<String, String>,
+        prompt: String,
+    },
     EnterOpenAudio,
     ExitOpenAudio,
     AudioInputChar(char),

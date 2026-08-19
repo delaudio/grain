@@ -233,6 +233,8 @@ impl App {
                 return Some(Action::TriggerGenerate);
             }
             Action::TriggerGenerate => {
+                self.state.preview.is_playing = true;
+                self.state.preview.seed = self.state.preview.seed.wrapping_add(1);
                 self.state.prompt.generation_status = GenerationStatus::Generating;
                 self.state.status_message = Some("Generating audio-reactive visual...".to_string());
 

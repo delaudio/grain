@@ -19,8 +19,28 @@ use action::Action;
 use app::App;
 use cli::Cli;
 use terminal::{init_terminal, install_panic_hook, restore_terminal};
+fn load_dotenv_if_exists() {
+    if let Ok(content) = std::fs::read_to_string(".env") {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                let k = k.trim();
+                let v = v.trim().trim_matches('"').trim_matches('\'');
+                if std::env::var(k).is_err() {
+                    unsafe {
+                        std::env::set_var(k, v);
+                    }
+                }
+            }
+        }
+    }
+}
 
 fn main() -> Result<()> {
+    load_dotenv_if_exists();
     let args = Cli::parse();
 
     install_panic_hook();

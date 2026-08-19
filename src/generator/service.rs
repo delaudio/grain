@@ -53,7 +53,29 @@ impl GenerationService {
     }
 }
 
+use crate::generator::agent::AgentCliGenerator;
+
 pub fn create_default_generator() -> GenerationService {
+    // 1. Direct custom CLI command (e.g. GRAIN_GENERATOR_CMD="claude -p" or "codex exec")
+    if let Ok(cmd) = std::env::var("GRAIN_GENERATOR_CMD") {
+        if !cmd.trim().is_empty() {
+            return GenerationService::new(Arc::new(AgentCliGenerator::custom(&cmd)));
+        }
+    }
+
+    // 2. Named agent provider (e.g. GRAIN_AI_PROVIDER="claude" or "codex")
+    let provider = std::env::var("GRAIN_AI_PROVIDER").ok().map(|s| s.to_lowercase());
+    let model = std::env::var("GRAIN_LLM_MODEL").ok();
+
+    if let Some(ref p) = provider {
+        if p == "claude" || p == "claude-code" {
+            return GenerationService::new(Arc::new(AgentCliGenerator::claude(model.as_deref())));
+        } else if p == "codex" {
+            return GenerationService::new(Arc::new(AgentCliGenerator::codex(model.as_deref())));
+        }
+    }
+
+    // 3. API Key based LLM (OpenAI / OpenRouter / Anthropic / Local API)
     let mut key = std::env::var("GRAIN_AI_KEY").or_else(|_| std::env::var("OPENAI_API_KEY")).ok();
 
     if key.is_none() {
@@ -84,5 +106,6 @@ pub fn create_default_generator() -> GenerationService {
         }
     }
 
+    // 4. Default offline fixture generator
     GenerationService::new(Arc::new(MockGenerator::new()))
 }

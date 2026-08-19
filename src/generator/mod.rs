@@ -1,8 +1,11 @@
+pub mod agent;
 pub mod llm;
 pub mod mock;
 pub mod provider;
 pub mod service;
 
+#[allow(unused_imports, dead_code)]
+pub use agent::AgentCliGenerator;
 #[allow(unused_imports, dead_code)]
 pub use mock::MockGenerator;
 #[allow(unused_imports, dead_code)]

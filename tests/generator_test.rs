@@ -44,3 +44,17 @@ fn test_validation_rejects_broken_generated_sketch() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("runtime validation"));
 }
+
+#[test]
+fn test_agent_cli_generator_extracts_code() {
+    use grain::generator::AgentCliGenerator;
+    let agent = AgentCliGenerator::new(
+        "echo".to_string(),
+        vec!["```javascript\nfunction setup(p) {}\nfunction draw(p, ctx) { p.circle(0, 0, 10); }\n```".to_string()],
+    );
+    let service = GenerationService::new(Arc::new(agent));
+    let code = service
+        .generate_and_validate("test prompt", 42)
+        .expect("CLI agent generator should succeed");
+    assert!(code.contains("p.circle(0, 0, 10)"));
+}

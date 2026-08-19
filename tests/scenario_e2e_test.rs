@@ -47,6 +47,10 @@ fn test_mvp_e2e_scenario() {
 
     let history_manager = HistoryManager::new(test_dir.clone());
     let mut app = App::with_history_manager(history_manager);
+    if let Some(idx) = app.state.engine.options.iter().position(|o| matches!(o.kind, grain::generator::EngineKind::OfflineMock)) {
+        app.state.engine.active_index = idx;
+        app.state.engine.selected_index = idx;
+    }
 
     // 1. Load Audio Fixture
     let fixture_path = PathBuf::from("fixtures/demo.wav");

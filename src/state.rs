@@ -8,6 +8,7 @@ pub enum InputMode {
     OpeningAudio,
     Help,
     Versions,
+    SelectModel,
 }
 
 use crate::audio::AudioAnalysis;
@@ -125,6 +126,7 @@ impl Default for PromptInfo {
     }
 }
 
+use crate::generator::EngineSelectionState;
 use crate::history::GenerationHistory;
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -141,6 +143,7 @@ pub struct GrainState {
     pub preview: PreviewInfo,
     pub prompt: PromptInfo,
     pub versions: VersionsState,
+    pub engine: EngineSelectionState,
     pub audio_input_buffer: String,
     pub status_message: Option<String>,
     pub terminal_size: (u16, u16),
@@ -155,6 +158,7 @@ impl Default for GrainState {
             preview: PreviewInfo::default(),
             prompt: PromptInfo::default(),
             versions: VersionsState::default(),
+            engine: EngineSelectionState::default(),
             audio_input_buffer: String::new(),
             status_message: Some("Ready. Press '?' for help.".to_string()),
             terminal_size: (80, 24),

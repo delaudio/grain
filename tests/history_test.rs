@@ -54,6 +54,10 @@ fn test_app_rollback_action() {
     }
 
     let mut app = App::with_history_manager(HistoryManager::new(test_dir.clone()));
+    if let Some(idx) = app.state.engine.options.iter().position(|o| matches!(o.kind, grain::generator::EngineKind::OfflineMock)) {
+        app.state.engine.active_index = idx;
+        app.state.engine.selected_index = idx;
+    }
 
     // Trigger generation v1
     app.state.prompt.active_prompt = "first sketch".to_string();

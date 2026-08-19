@@ -36,6 +36,7 @@ pub fn render(frame: &mut Frame, state: &GrainState) {
         InputMode::Help => render_help_modal(frame, area),
         InputMode::Versions => render_versions_modal(frame, area, state),
         InputMode::OpeningAudio => render_open_audio_modal(frame, area, state),
+        InputMode::SelectModel => render_model_selector_modal(frame, area, state),
         _ => {}
     }
 }
@@ -47,6 +48,7 @@ fn render_header(frame: &mut Frame, area: Rect, state: &GrainState) {
         InputMode::OpeningAudio => "OPEN AUDIO",
         InputMode::Help => "HELP",
         InputMode::Versions => "VERSIONS",
+        InputMode::SelectModel => "AI ENGINE SELECTOR",
     };
 
     let mode_color = match state.mode {
@@ -55,6 +57,7 @@ fn render_header(frame: &mut Frame, area: Rect, state: &GrainState) {
         InputMode::OpeningAudio => Color::Magenta,
         InputMode::Help => Color::Green,
         InputMode::Versions => Color::Blue,
+        InputMode::SelectModel => Color::LightCyan,
     };
 
     let header_layout = Layout::default()
@@ -285,9 +288,15 @@ fn render_prompt_panel(frame: &mut Frame, area: Rect, state: &GrainState) {
         GenerationStatus::Failed(e) => Span::styled(format!(" [Error: {}] ", e), Style::default().fg(Color::Red)),
     };
 
+    let engine_badge = Span::styled(
+        format!(" [{}] ", state.engine.active_label()),
+        Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD),
+    );
+
     let prompt_line = Line::from(vec![
         Span::styled("Prompt: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::styled(content, Style::default().fg(Color::White)),
+        engine_badge,
         gen_status_span,
     ]);
 
@@ -318,6 +327,8 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &GrainState) {
             Span::raw(" Generate  "),
             Span::styled("Space", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Play/Pause  "),
+            Span::styled("m", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Engine  "),
             Span::styled("v", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Versions  "),
             Span::styled("?", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -338,6 +349,14 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &GrainState) {
             Span::raw(" Load Audio File  "),
             Span::styled("Esc", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Cancel"),
+        ],
+        InputMode::SelectModel => vec![
+            Span::styled("↑/↓ / j/k", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Select Engine  "),
+            Span::styled("Enter", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Activate  "),
+            Span::styled("Esc / m", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Close Overlay"),
         ],
         InputMode::Help | InputMode::Versions => vec![
             Span::styled("Esc / q", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -402,6 +421,10 @@ fn render_help_modal(frame: &mut Frame, area: Rect) {
             Span::raw("Play / Pause audio & preview playback"),
         ]),
         Line::from(vec![
+            Span::styled("  m         ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw("Select AI Engine / Model (Claude, Codex, OpenAI, Mock)"),
+        ]),
+        Line::from(vec![
             Span::styled("  v         ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw("View sketch version history and rollback"),
         ]),
@@ -421,6 +444,71 @@ fn render_help_modal(frame: &mut Frame, area: Rect) {
         .block(help_block)
         .alignment(Alignment::Left);
 
+    frame.render_widget(p, popup_area);
+}
+
+fn render_model_selector_modal(frame: &mut Frame, area: Rect, state: &GrainState) {
+    let popup_area = centered_rect(75, 65, area);
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(Color::LightCyan))
+        .title(" AI Engine & Model Selector ");
+
+    let mut text = vec![
+        Line::from(vec![
+            Span::styled("Select AI Generation Engine / Model", Style::default().add_modifier(Modifier::BOLD).fg(Color::LightCyan)),
+            Span::raw("  "),
+            Span::styled("(↑/↓ Navigate • Enter Activate Engine • Esc Close)", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(""),
+    ];
+
+    for (idx, opt) in state.engine.options.iter().enumerate() {
+        let is_selected = idx == state.engine.selected_index;
+        let is_active = idx == state.engine.active_index;
+
+        let cursor = if is_selected { "▶ " } else { "  " };
+        let active_badge = if is_active { " [ACTIVE]" } else { "" };
+
+        let status_indicator = if opt.is_available {
+            Span::styled(" ● Available ", Style::default().fg(Color::Green))
+        } else {
+            Span::styled(" ○ Missing CLI/Key ", Style::default().fg(Color::DarkGray))
+        };
+
+        let label_style = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
+        } else if is_active {
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        } else if opt.is_available {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let active_span = if is_active {
+            Span::styled(active_badge, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        } else {
+            Span::raw("")
+        };
+
+        text.push(Line::from(vec![
+            Span::styled(format!("{}{}", cursor, opt.label), label_style),
+            active_span,
+            Span::raw(" "),
+            status_indicator,
+            Span::styled(format!("— {}", opt.detail), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    text.push(Line::from(""));
+    text.push(Line::from(Span::styled("Tip: Environment variables (.env) configure API keys and default provider.", Style::default().fg(Color::DarkGray))));
+    text.push(Line::from(Span::styled("Press 'Enter' to activate selected engine, 'Esc' or 'm' to close", Style::default().fg(Color::DarkGray))));
+
+    let p = Paragraph::new(text).block(block);
     frame.render_widget(p, popup_area);
 }
 
@@ -542,6 +630,16 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut state = GrainState::default();
         state.mode = InputMode::Help;
+
+        terminal.draw(|f| render(f, &state)).unwrap();
+    }
+
+    #[test]
+    fn test_ui_renders_model_selector_modal() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = GrainState::default();
+        state.mode = InputMode::SelectModel;
 
         terminal.draw(|f| render(f, &state)).unwrap();
     }

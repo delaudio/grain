@@ -100,6 +100,31 @@ impl App {
             Action::Resize(w, h) => {
                 self.state.terminal_size = (w, h);
             }
+            Action::ToggleSelectModel => {
+                self.state.mode = match self.state.mode {
+                    InputMode::SelectModel => InputMode::Normal,
+                    _ => {
+                        self.state.engine.selected_index = self.state.engine.active_index;
+                        InputMode::SelectModel
+                    }
+                };
+            }
+            Action::SelectPreviousEngine => {
+                if self.state.engine.selected_index > 0 {
+                    self.state.engine.selected_index -= 1;
+                }
+            }
+            Action::SelectNextEngine => {
+                if self.state.engine.selected_index + 1 < self.state.engine.options.len() {
+                    self.state.engine.selected_index += 1;
+                }
+            }
+            Action::ActivateSelectedEngine => {
+                self.state.engine.active_index = self.state.engine.selected_index;
+                self.state.mode = InputMode::Normal;
+                let label = self.state.engine.active_label().to_string();
+                self.state.status_message = Some(format!("Switched AI Engine to: {}", label));
+            }
             Action::ToggleHelp => {
                 self.state.mode = match self.state.mode {
                     InputMode::Help => InputMode::Normal,
@@ -236,14 +261,17 @@ impl App {
                 self.state.preview.is_playing = true;
                 self.state.preview.seed = self.state.preview.seed.wrapping_add(1);
                 self.state.prompt.generation_status = GenerationStatus::Generating;
-                self.state.status_message = Some("Generating audio-reactive visual...".to_string());
+                self.state.status_message = Some(format!(
+                    "Generating audio-reactive visual via {}...",
+                    self.state.engine.active_label()
+                ));
 
                 let prompt = self.state.prompt.active_prompt.clone();
                 let seed = self.state.preview.seed;
                 let is_revision = self.state.prompt.total_versions > 0;
                 let current_sketch = self.state.preview.sketch_source.clone();
 
-                let service = crate::generator::create_default_generator();
+                let service = self.state.engine.create_service_for_active();
                 let result = if is_revision {
                     service.revise_and_validate(&prompt, &current_sketch, seed)
                 } else {
@@ -339,6 +367,7 @@ impl App {
                 KeyCode::Char('g') => Some(Action::TriggerGenerate),
                 KeyCode::Char(' ') => Some(Action::TogglePlayback),
                 KeyCode::Char('v') => Some(Action::ToggleVersions),
+                KeyCode::Char('m') => Some(Action::ToggleSelectModel),
                 KeyCode::Char('o') => Some(Action::EnterOpenAudio),
                 _ => None,
             },
@@ -374,6 +403,15 @@ impl App {
                 }
                 _ => None,
             },
+            InputMode::SelectModel => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => Some(Action::SelectPreviousEngine),
+                KeyCode::Down | KeyCode::Char('j') => Some(Action::SelectNextEngine),
+                KeyCode::Enter => Some(Action::ActivateSelectedEngine),
+                KeyCode::Esc | KeyCode::Char('m') | KeyCode::Char('q') => {
+                    Some(Action::ToggleSelectModel)
+                }
+                _ => None,
+            },
         }
     }
 }
@@ -381,13 +419,19 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generator::EngineKind;
 
     fn create_test_app(test_name: &str) -> App {
         let temp_dir = std::env::temp_dir().join(format!("grain_test_{}", test_name));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
-        App::with_history_manager(HistoryManager::new(temp_dir))
+        let mut app = App::with_history_manager(HistoryManager::new(temp_dir));
+        if let Some(idx) = app.state.engine.options.iter().position(|o| o.kind == EngineKind::OfflineMock) {
+            app.state.engine.active_index = idx;
+            app.state.engine.selected_index = idx;
+        }
+        app
     }
 
     #[test]
@@ -456,12 +500,34 @@ mod tests {
 
     #[test]
     fn test_tick_advances_frame_when_playing() {
-        let mut app = create_test_app("tick_playing");
-        app.state.preview.is_playing = true;
+        let mut app = create_test_app("tick_frame");
         app.state.preview.total_frames = 100;
         app.state.preview.current_frame = 0;
+        app.state.preview.is_playing = true;
 
         app.update(Action::Tick);
         assert_eq!(app.state.preview.current_frame, 1);
+    }
+
+    #[test]
+    fn test_engine_selection_flow() {
+        let mut app = create_test_app("engine_selection");
+        assert_eq!(app.state.mode, InputMode::Normal);
+
+        // Press 'm' to enter engine selection
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(action, Some(Action::ToggleSelectModel));
+        app.update(action.unwrap());
+        assert_eq!(app.state.mode, InputMode::SelectModel);
+
+        // Move selection
+        app.update(Action::SelectNextEngine);
+        let selected_idx = app.state.engine.selected_index;
+
+        // Activate selection
+        app.update(Action::ActivateSelectedEngine);
+        assert_eq!(app.state.mode, InputMode::Normal);
+        assert_eq!(app.state.engine.active_index, selected_idx);
+        assert!(app.state.status_message.unwrap().contains("Switched AI Engine to:"));
     }
 }

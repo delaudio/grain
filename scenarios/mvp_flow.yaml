@@ -1,0 +1,69 @@
+# Grain MVP End-to-End Terminal Scenario
+# Driven deterministically by ttry (https://github.com/delaudio/ttry)
+
+name: grain-mvp-e2e
+description: End-to-end deterministic test for Grain audio-reactive creative workflow
+terminal:
+  cols: 80
+  rows: 24
+  env:
+    GRAIN_ANSI_ONLY: "1"
+    RUST_BACKTRACE: "1"
+
+command: cargo run -- fixtures/demo.wav
+
+steps:
+  # 1. Launch & Audio Analysis Verification
+  - name: wait_audio_ready
+    wait_for: "Track: demo.wav"
+    timeout_ms: 5000
+
+  - name: assert_ready_status
+    wait_for: "● READY"
+    timeout_ms: 3000
+
+  # 2. Focus Prompt Input
+  - name: enter_prompt_mode
+    send: "p"
+    wait_for: "EDITING PROMPT"
+
+  # 3. Enter Natural Language Prompt
+  - name: type_prompt
+    send_text: "geometric audio tunnel"
+
+  # 4. Trigger Generation
+  - name: commit_generation
+    send_key: "Enter"
+    wait_for: "Active visual: sketch_v1"
+    timeout_ms: 10000
+
+  - name: verify_preview_active
+    wait_for: "Visual Preview"
+
+  # 5. Revise the active visual
+  - name: enter_revision_mode
+    send: "p"
+    wait_for: "EDITING PROMPT"
+
+  - name: type_revision
+    send_text: "make it red with high speed"
+
+  - name: commit_revision
+    send_key: "Enter"
+    wait_for: "Active visual: sketch_v2"
+    timeout_ms: 10000
+
+  # 6. Verify Version History & Rollback UI
+  - name: open_versions_dialog
+    send: "v"
+    wait_for: "Sketch Version History"
+    wait_for: "001 • sketch_v1"
+    wait_for: "002 • sketch_v2"
+
+  - name: close_versions_dialog
+    send_key: "Escape"
+
+  # 7. Clean Application Exit
+  - name: quit_application
+    send: "q"
+    assert_exit: 0

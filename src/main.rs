@@ -2,6 +2,7 @@ mod action;
 mod app;
 mod audio;
 mod cli;
+mod runtime;
 mod state;
 mod terminal;
 mod ui;

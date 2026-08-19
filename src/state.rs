@@ -45,6 +45,8 @@ impl Default for AudioInfo {
     }
 }
 
+use crate::runtime::{FrameRenderResult, RuntimeDiagnostic, DEFAULT_SKETCH_TEMPLATE};
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PreviewStatus {
@@ -55,9 +57,10 @@ pub enum PreviewStatus {
     Error(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PreviewInfo {
     pub sketch_name: String,
+    pub sketch_source: String,
     pub seed: u64,
     pub current_frame: usize,
     pub total_frames: usize,
@@ -66,12 +69,15 @@ pub struct PreviewInfo {
     pub width: u32,
     pub height: u32,
     pub status: PreviewStatus,
+    pub active_frame_result: Option<FrameRenderResult>,
+    pub runtime_error: Option<RuntimeDiagnostic>,
 }
 
 impl Default for PreviewInfo {
     fn default() -> Self {
         Self {
             sketch_name: "initial_placeholder".to_string(),
+            sketch_source: DEFAULT_SKETCH_TEMPLATE.to_string(),
             seed: 42,
             current_frame: 0,
             total_frames: 3600,
@@ -80,6 +86,8 @@ impl Default for PreviewInfo {
             width: 800,
             height: 600,
             status: PreviewStatus::Placeholder,
+            active_frame_result: None,
+            runtime_error: None,
         }
     }
 }

@@ -18,8 +18,16 @@ impl AgentCliGenerator {
             "--no-session-persistence".to_string(),
         ];
         if let Some(m) = model {
-            args.push("--model".to_string());
-            args.push(m.to_string());
+            let m_lower = m.trim().to_lowercase();
+            // Only pass --model if it's a recognized Claude model
+            if m_lower.contains("claude")
+                || m_lower.contains("sonnet")
+                || m_lower.contains("opus")
+                || m_lower.contains("haiku")
+            {
+                args.push("--model".to_string());
+                args.push(m.to_string());
+            }
         }
         Self {
             command: "claude".to_string(),

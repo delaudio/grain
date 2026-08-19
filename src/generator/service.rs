@@ -65,13 +65,18 @@ pub fn create_default_generator() -> GenerationService {
 
     // 2. Named agent provider (e.g. GRAIN_AI_PROVIDER="claude" or "codex")
     let provider = std::env::var("GRAIN_AI_PROVIDER").ok().map(|s| s.to_lowercase());
-    let model = std::env::var("GRAIN_LLM_MODEL").ok();
 
     if let Some(ref p) = provider {
         if p == "claude" || p == "claude-code" {
-            return GenerationService::new(Arc::new(AgentCliGenerator::claude(model.as_deref())));
+            let claude_model = std::env::var("GRAIN_CLAUDE_MODEL")
+                .or_else(|_| std::env::var("GRAIN_LLM_MODEL"))
+                .ok();
+            return GenerationService::new(Arc::new(AgentCliGenerator::claude(claude_model.as_deref())));
         } else if p == "codex" {
-            return GenerationService::new(Arc::new(AgentCliGenerator::codex(model.as_deref())));
+            let codex_model = std::env::var("GRAIN_CODEX_MODEL")
+                .or_else(|_| std::env::var("GRAIN_LLM_MODEL"))
+                .ok();
+            return GenerationService::new(Arc::new(AgentCliGenerator::codex(codex_model.as_deref())));
         }
     }
 

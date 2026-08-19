@@ -92,6 +92,19 @@ impl HistoryManager {
         Ok(meta)
     }
 
+    pub fn get_sketch_path(&self, version_file: &str) -> PathBuf {
+        self.sketches_dir().join(version_file)
+    }
+
+    pub fn get_active_sketch_path(&self) -> Result<Option<PathBuf>> {
+        let history = self.load_history().unwrap_or_default();
+        if let Some(active) = history.versions.iter().find(|v| v.version == history.active_version) {
+            Ok(Some(self.get_sketch_path(&active.sketch_file)))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn load_sketch_content(&self, version_file: &str) -> Result<String> {
         let path = self.sketches_dir().join(version_file);
         let content = fs::read_to_string(&path)

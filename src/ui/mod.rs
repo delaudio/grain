@@ -328,6 +328,8 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &GrainState) {
             Span::raw(" Generate  "),
             Span::styled("Space", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Play/Pause  "),
+            Span::styled("e", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Edit  "),
             Span::styled("t", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Tuning  "),
             Span::styled("m", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -432,6 +434,14 @@ fn render_help_modal(frame: &mut Frame, area: Rect) {
         Line::from(vec![
             Span::styled("  Space     ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw("Play / Pause audio & preview playback"),
+        ]),
+        Line::from(vec![
+            Span::styled("  e         ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw("Edit active sketch directly in your code editor ($EDITOR)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  t / a     ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw("Open Audio DSP reactivity fine-tuning modal"),
         ]),
         Line::from(vec![
             Span::styled("  m         ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),

@@ -42,5 +42,6 @@ pub enum Action {
     AudioBackspace,
     CommitOpenAudio,
     LoadAudio(PathBuf),
+    OpenInEditor,
     SetStatusMessage(String),
 }

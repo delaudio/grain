@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::SystemTime;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::action::Action;
 use crate::state::{AudioStatus, GenerationStatus, GrainState, InputMode, PreviewStatus};
@@ -9,6 +10,7 @@ pub struct App {
     pub state: GrainState,
     pub history_manager: HistoryManager,
     pub audio_player: crate::audio::AudioPlayer,
+    pub last_watched_mtime: Option<SystemTime>,
 }
 
 impl Default for App {
@@ -24,6 +26,7 @@ impl App {
 
     pub fn with_history_manager(history_manager: HistoryManager) -> Self {
         let mut state = GrainState::default();
+        let mut last_watched_mtime = None;
 
         if let Ok(history) = history_manager.load_history() {
             if !history.versions.is_empty() {
@@ -39,6 +42,10 @@ impl App {
                         state.preview.sketch_source = code;
                         state.preview.status = PreviewStatus::Ready;
                     }
+                    let p = history_manager.get_sketch_path(&active_meta.sketch_file);
+                    if let Ok(meta) = std::fs::metadata(&p) {
+                        last_watched_mtime = meta.modified().ok();
+                    }
                 }
             }
         }
@@ -47,6 +54,7 @@ impl App {
             state,
             history_manager,
             audio_player: crate::audio::AudioPlayer::new(),
+            last_watched_mtime,
         }
     }
 
@@ -112,6 +120,9 @@ impl App {
                     let prev = self.state.live_audio_features;
                     self.state.live_audio_features = crate::audio::process_features(raw, &self.state.dsp, Some(peak), Some(prev));
                 }
+
+                // Check for external file modifications in .grain/sketches/ and hot reload live
+                self.check_and_reload_sketch_from_disk();
             }
             Action::Resize(w, h) => {
                 self.state.terminal_size = (w, h);
@@ -412,11 +423,36 @@ impl App {
             Action::LoadAudio(path) => {
                 self.load_audio(path);
             }
+            Action::OpenInEditor => {
+                // Handled in main loop (suspends TUI, opens $EDITOR)
+            }
             Action::SetStatusMessage(msg) => {
                 self.state.status_message = Some(msg);
             }
         }
         None
+    }
+
+    pub fn check_and_reload_sketch_from_disk(&mut self) {
+        if let Ok(Some(path)) = self.history_manager.get_active_sketch_path() {
+            if let Ok(meta) = std::fs::metadata(&path) {
+                if let Ok(mtime) = meta.modified() {
+                    if let Some(last_mtime) = self.last_watched_mtime {
+                        if mtime > last_mtime {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                if content != self.state.preview.sketch_source {
+                                    self.state.preview.sketch_source = content;
+                                    self.state.status_message = Some("🔥 Hot-reloaded sketch changes from disk".to_string());
+                                }
+                            }
+                            self.last_watched_mtime = Some(mtime);
+                        }
+                    } else {
+                        self.last_watched_mtime = Some(mtime);
+                    }
+                }
+            }
+        }
     }
 
     pub fn handle_key_event(&self, key: KeyEvent) -> Option<Action> {
@@ -435,6 +471,7 @@ impl App {
                 KeyCode::Char('t') | KeyCode::Char('a') => Some(Action::ToggleTuningModal),
                 KeyCode::Char('v') => Some(Action::ToggleVersions),
                 KeyCode::Char('m') => Some(Action::ToggleSelectModel),
+                KeyCode::Char('e') => Some(Action::OpenInEditor),
                 KeyCode::Char('o') => Some(Action::EnterOpenAudio),
                 _ => None,
             },

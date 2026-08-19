@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::state::{AudioStatus, GenerationStatus, GrainState, InputMode, PreviewStatus};
+use crate::state::{AudioStatus, GenerationStatus, GrainState, InputMode};
 
 pub fn render(frame: &mut Frame, state: &GrainState) {
     let area = frame.area();
@@ -158,13 +158,17 @@ fn render_audio_panel(frame: &mut Frame, area: Rect, state: &GrainState) {
 }
 
 fn render_preview_area(frame: &mut Frame, area: Rect, state: &GrainState) {
+    let engine = crate::preview::PreviewEngine::new();
+
     let preview_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Magenta))
         .title(format!(
-            " Visual Preview (p5.js runtime) — {} [Seed: {}] ",
-            state.preview.sketch_name, state.preview.seed
+            " Visual Preview ({}) — {} [Seed: {}] ",
+            engine.backend_name(),
+            state.preview.sketch_name,
+            state.preview.seed
         ));
 
     let inner = preview_block.inner(area);
@@ -173,35 +177,6 @@ fn render_preview_area(frame: &mut Frame, area: Rect, state: &GrainState) {
     if inner.height < 4 || inner.width < 10 {
         return;
     }
-
-    // Centered placeholder visualization
-    let mut lines = Vec::new();
-
-    let status_str = match &state.preview.status {
-        PreviewStatus::Placeholder => "Placeholder preview active",
-        PreviewStatus::Ready => "Runtime ready",
-        PreviewStatus::Rendering => "Rendering frames...",
-        PreviewStatus::Error(e) => e.as_str(),
-    };
-
-    lines.push(Line::from(vec![
-        Span::styled("┌────────────────────────────────────────────────────────┐", Style::default().fg(Color::DarkGray)),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("│  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("p5.js Creative Runtime Bridge", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::styled("                              │", Style::default().fg(Color::DarkGray)),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("│  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("Target Canvas: {}x{} @ {}fps", state.preview.width, state.preview.height, state.preview.fps), Style::default().fg(Color::Cyan)),
-        Span::styled("                     │", Style::default().fg(Color::DarkGray)),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("│  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("Status: {}", status_str), Style::default().fg(Color::Green)),
-        Span::styled("                                 │", Style::default().fg(Color::DarkGray)),
-    ]));
 
     use crate::audio::AudioFeatures;
 
@@ -217,13 +192,49 @@ fn render_preview_area(frame: &mut Frame, area: Rect, state: &GrainState) {
         }
     };
 
+    // Split inner area into visual canvas (flexible) and reactivity meter (1 line at bottom)
+    let preview_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    match engine.render_frame(
+        &state.preview.sketch_source,
+        state.preview.current_frame,
+        state.preview.fps,
+        state.preview.seed,
+        features,
+        preview_layout[0],
+    ) {
+        Ok((_res, visual_lines)) => {
+            let visual_p = Paragraph::new(visual_lines)
+                .alignment(Alignment::Center)
+                .block(Block::default());
+            frame.render_widget(visual_p, preview_layout[0]);
+        }
+        Err(err) => {
+            let err_lines = vec![
+                Line::from(Span::styled("⚠️ Visual Runtime Diagnostic:", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
+                Line::from(Span::styled(format!("{}", err), Style::default().fg(Color::LightRed))),
+            ];
+            let err_p = Paragraph::new(err_lines)
+                .alignment(Alignment::Center)
+                .block(Block::default());
+            frame.render_widget(err_p, preview_layout[0]);
+        }
+    }
+
+    // Reactivity bottom bar
     let make_bar = |val: f32, len: usize| -> String {
         let filled = ((val.clamp(0.0, 1.0) * len as f32).round() as usize).min(len);
         "█".repeat(filled) + &"░".repeat(len - filled)
     };
 
-    lines.push(Line::from(vec![
-        Span::styled("│  Reactivity: ", Style::default().fg(Color::DarkGray)),
+    let meter_line = Line::from(vec![
+        Span::styled("Reactivity: ", Style::default().fg(Color::DarkGray)),
         Span::styled("AMP ", Style::default().fg(Color::White)),
         Span::styled(format!("[{}] ", make_bar(features.amplitude, 6)), Style::default().fg(Color::Magenta)),
         Span::styled("LOW ", Style::default().fg(Color::Cyan)),
@@ -232,26 +243,12 @@ fn render_preview_area(frame: &mut Frame, area: Rect, state: &GrainState) {
         Span::styled(format!("[{}] ", make_bar(features.mid, 6)), Style::default().fg(Color::Yellow)),
         Span::styled("HI ", Style::default().fg(Color::Green)),
         Span::styled(format!("[{}]", make_bar(features.high, 6)), Style::default().fg(Color::Green)),
-        Span::styled(" │", Style::default().fg(Color::DarkGray)),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("└────────────────────────────────────────────────────────┘", Style::default().fg(Color::DarkGray)),
-    ]));
+    ]);
 
-    let placeholder_p = Paragraph::new(lines)
+    let meter_p = Paragraph::new(meter_line)
         .alignment(Alignment::Center)
         .block(Block::default());
-
-    let center_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Fill(1),
-            Constraint::Length(6),
-            Constraint::Fill(1),
-        ])
-        .split(inner);
-
-    frame.render_widget(placeholder_p, center_layout[1]);
+    frame.render_widget(meter_p, preview_layout[1]);
 }
 
 fn render_prompt_panel(frame: &mut Frame, area: Rect, state: &GrainState) {

@@ -3,6 +3,7 @@ mod app;
 mod audio;
 mod cli;
 mod generator;
+mod preview;
 mod runtime;
 mod state;
 mod terminal;

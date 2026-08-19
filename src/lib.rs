@@ -3,6 +3,7 @@ pub mod app;
 pub mod audio;
 pub mod cli;
 pub mod generator;
+pub mod preview;
 pub mod runtime;
 pub mod state;
 pub mod terminal;

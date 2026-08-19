@@ -54,11 +54,32 @@ impl GenerationService {
 }
 
 pub fn create_default_generator() -> GenerationService {
-    if let Ok(key) = std::env::var("GRAIN_AI_KEY").or_else(|_| std::env::var("OPENAI_API_KEY")) {
-        if !key.trim().is_empty() {
+    let mut key = std::env::var("GRAIN_AI_KEY").or_else(|_| std::env::var("OPENAI_API_KEY")).ok();
+
+    if key.is_none() {
+        if let Ok(content) = std::fs::read_to_string(".env") {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    let k = k.trim();
+                    let v = v.trim().trim_matches('"').trim_matches('\'');
+                    if (k == "OPENAI_API_KEY" || k == "GRAIN_AI_KEY") && !v.is_empty() {
+                        key = Some(v.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(key_str) = key {
+        if !key_str.trim().is_empty() {
             let base_url = std::env::var("OPENAI_BASE_URL").ok();
             let model = std::env::var("GRAIN_LLM_MODEL").ok();
-            let llm = LlmGenerator::new(key, base_url, model);
+            let llm = LlmGenerator::new(key_str, base_url, model);
             return GenerationService::new(Arc::new(llm));
         }
     }

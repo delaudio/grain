@@ -12,12 +12,145 @@ function createPRNG(seed) {
   };
 }
 
+// Simple deterministic Perlin-like 1D/2D/3D noise
+function createNoise(seed) {
+  const p = new Uint8Array(512);
+  const prng = createPRNG(seed || 1337);
+  const perm = Array.from({ length: 256 }, (_, i) => i);
+  for (let i = 255; i > 0; i--) {
+    const j = Math.floor(prng() * (i + 1));
+    [perm[i], perm[j]] = [perm[j], perm[i]];
+  }
+  for (let i = 0; i < 512; i++) {
+    p[i] = perm[i & 255];
+  }
+
+  function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+  function lerp(t, a, b) { return a + t * (b - a); }
+  function grad(hash, x, y) {
+    const h = hash & 3;
+    const u = h < 2 ? x : y;
+    const v = h < 2 ? y : x;
+    return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+  }
+
+  return function(x = 0, y = 0) {
+    const X = Math.floor(x) & 255;
+    const Y = Math.floor(y) & 255;
+    const xf = x - Math.floor(x);
+    const yf = y - Math.floor(y);
+    const u = fade(xf);
+    const v = fade(yf);
+
+    const a = p[X] + Y;
+    const aa = p[a];
+    const ab = p[a + 1];
+    const b = p[X + 1] + Y;
+    const ba = p[b];
+    const bb = p[b + 1];
+
+    const res = lerp(v,
+      lerp(u, grad(p[aa], xf, yf), grad(p[ba], xf - 1, yf)),
+      lerp(u, grad(p[ab], xf, yf - 1), grad(p[bb], xf - 1, yf - 1))
+    );
+    return (res + 1) / 2;
+  };
+}
+
+class P5Vector {
+  constructor(x = 0, y = 0, z = 0) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+  }
+
+  set(x, y, z) {
+    if (x instanceof P5Vector) {
+      this.x = x.x; this.y = x.y; this.z = x.z;
+    } else {
+      this.x = x || 0; this.y = y || 0; this.z = z || 0;
+    }
+    return this;
+  }
+
+  copy() { return new P5Vector(this.x, this.y, this.z); }
+
+  add(x, y = 0, z = 0) {
+    if (x instanceof P5Vector) {
+      this.x += x.x; this.y += x.y; this.z += x.z;
+    } else {
+      this.x += x; this.y += y; this.z += z;
+    }
+    return this;
+  }
+
+  sub(x, y = 0, z = 0) {
+    if (x instanceof P5Vector) {
+      this.x -= x.x; this.y -= x.y; this.z -= x.z;
+    } else {
+      this.x -= x; this.y -= y; this.z -= z;
+    }
+    return this;
+  }
+
+  mult(n) {
+    this.x *= n; this.y *= n; this.z *= n;
+    return this;
+  }
+
+  div(n) {
+    if (n !== 0) {
+      this.x /= n; this.y /= n; this.z /= n;
+    }
+    return this;
+  }
+
+  magSq() { return this.x * this.x + this.y * this.y + this.z * this.z; }
+  mag() { return Math.sqrt(this.magSq()); }
+  heading() { return Math.atan2(this.y, this.x); }
+
+  normalize() {
+    const m = this.mag();
+    if (m !== 0) this.div(m);
+    return this;
+  }
+
+  setMag(len) {
+    return this.normalize().mult(len);
+  }
+
+  limit(max) {
+    const mSq = this.magSq();
+    if (mSq > max * max) {
+      this.div(Math.sqrt(mSq)).mult(max);
+    }
+    return this;
+  }
+
+  dist(v) {
+    const dx = this.x - v.x;
+    const dy = this.y - v.y;
+    const dz = this.z - v.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  static fromAngle(angle, length = 1) {
+    return new P5Vector(length * Math.cos(angle), length * Math.sin(angle), 0);
+  }
+
+  static random2D() {
+    return P5Vector.fromAngle(Math.random() * Math.PI * 2);
+  }
+}
+
 class HeadlessP5 {
   constructor(width, height, seed) {
     this.width = width;
     this.height = height;
     this.commands = [];
-    this.prng = createPRNG(seed || 42);
+    this.seed = seed || 42;
+    this.prng = createPRNG(this.seed);
+    this.noiseGen = createNoise(this.seed);
     this.currentFill = [255, 255, 255, 1];
     this.currentStroke = [0, 0, 0, 1];
     this.doFill = true;
@@ -25,7 +158,81 @@ class HeadlessP5 {
     this.strokeWidth = 1;
     this.matrixStack = [];
     this.transform = { x: 0, y: 0, rot: 0, scaleX: 1, scaleY: 1 };
+    this.angleModeType = 'radians';
+
+    // Vector helper
+    this.Vector = P5Vector;
+
+    // Constants
+    this.PI = Math.PI;
+    this.TWO_PI = Math.PI * 2;
+    this.TAU = Math.PI * 2;
+    this.HALF_PI = Math.PI / 2;
+    this.QUARTER_PI = Math.PI / 4;
+    this.RGB = 'rgb';
+    this.HSB = 'hsb';
+    this.CENTER = 'center';
+    this.RADIUS = 'radius';
+    this.CORNER = 'corner';
+    this.CORNERS = 'corners';
+    this.CLOSE = 'close';
+    this.DEGREES = 'degrees';
+    this.RADIANS = 'radians';
   }
+
+  createCanvas(w, h) {
+    if (typeof w === 'number') this.width = w;
+    if (typeof h === 'number') this.height = h;
+  }
+
+  randomSeed(s) {
+    this.prng = createPRNG(s || 42);
+  }
+
+  noiseSeed(s) {
+    this.noiseGen = createNoise(s || 42);
+  }
+
+  frameRate(fps) {}
+  noLoop() {}
+  loop() {}
+  redraw() {}
+  blendMode(mode) {}
+  cursor() {}
+  noCursor() {}
+  smooth() {}
+  noSmooth() {}
+
+  createVector(x = 0, y = 0, z = 0) {
+    return new P5Vector(x, y, z);
+  }
+
+  colorMode(mode, max1 = 255, max2 = 255, max3 = 255, maxA = 1) {}
+  rectMode(mode) {}
+  ellipseMode(mode) {}
+
+  color(r, g = r, b = r, a = 1) {
+    return [r, g, b, a];
+  }
+
+  red(c) { return Array.isArray(c) ? c[0] : 255; }
+  green(c) { return Array.isArray(c) ? c[1] : 255; }
+  blue(c) { return Array.isArray(c) ? c[2] : 255; }
+  alpha(c) { return Array.isArray(c) ? c[3] : 1; }
+
+  angleMode(mode) {
+    if (mode === 'degrees' || mode === 'DEGREES') {
+      this.angleModeType = 'degrees';
+    } else {
+      this.angleModeType = 'radians';
+    }
+  }
+
+  radians(deg) { return (deg * Math.PI) / 180; }
+  degrees(rad) { return (rad * 180) / Math.PI; }
+  sq(n) { return n * n; }
+  norm(value, start, stop) { return this.map(value, start, stop, 0, 1); }
+  mag(x, y) { return Math.hypot(x, y); }
 
   random(min = 0, max = 1) {
     if (typeof min === 'number' && typeof max === 'number') {
@@ -33,6 +240,50 @@ class HeadlessP5 {
     }
     return this.prng() * min;
   }
+
+  noise(x = 0, y = 0) {
+    return this.noiseGen(x, y);
+  }
+
+  map(value, start1, stop1, start2, stop2) {
+    return start2 + (stop2 - start2) * ((value - start1) / (stop1 - start1));
+  }
+
+  constrain(n, low, high) {
+    return Math.max(Math.min(n, high), low);
+  }
+
+  dist(x1, y1, x2, y2) {
+    return Math.hypot(x2 - x1, y2 - y1);
+  }
+
+  lerp(start, stop, amt) {
+    return start + (stop - start) * amt;
+  }
+
+  sin(a) {
+    const angle = this.angleModeType === 'degrees' ? (a * Math.PI) / 180 : a;
+    return Math.sin(angle);
+  }
+
+  cos(a) {
+    const angle = this.angleModeType === 'degrees' ? (a * Math.PI) / 180 : a;
+    return Math.cos(angle);
+  }
+
+  tan(a) {
+    const angle = this.angleModeType === 'degrees' ? (a * Math.PI) / 180 : a;
+    return Math.tan(angle);
+  }
+
+  abs(n) { return Math.abs(n); }
+  sqrt(n) { return Math.sqrt(n); }
+  floor(n) { return Math.floor(n); }
+  ceil(n) { return Math.ceil(n); }
+  round(n) { return Math.round(n); }
+  min(...args) { return Math.min(...args); }
+  max(...args) { return Math.max(...args); }
+  pow(n, e) { return Math.pow(n, e); }
 
   background(r, g = r, b = r, a = 1) {
     this.commands.push({ type: 'background', color: [r, g, b, a] });
@@ -71,6 +322,21 @@ class HeadlessP5 {
     });
   }
 
+  ellipse(x, y, w, h = w) {
+    this.commands.push({
+      type: 'circle',
+      x: x + this.transform.x,
+      y: y + this.transform.y,
+      radius: Math.max(w, h) / 2,
+      fill: this.doFill ? this.currentFill : null,
+      stroke: this.doStroke ? this.currentStroke : null
+    });
+  }
+
+  point(x, y) {
+    this.circle(x, y, 2);
+  }
+
   rect(x, y, w, h) {
     this.commands.push({
       type: 'rect',
@@ -95,6 +361,54 @@ class HeadlessP5 {
     });
   }
 
+  triangle(x1, y1, x2, y2, x3, y3) {
+    this.line(x1, y1, x2, y2);
+    this.line(x2, y2, x3, y3);
+    this.line(x3, y3, x1, y1);
+  }
+
+  quad(x1, y1, x2, y2, x3, y3, x4, y4) {
+    this.line(x1, y1, x2, y2);
+    this.line(x2, y2, x3, y3);
+    this.line(x3, y3, x4, y4);
+    this.line(x4, y4, x1, y1);
+  }
+
+  arc(x, y, w, h, start, stop) {
+    this.ellipse(x, y, w, h);
+  }
+
+  beginShape() {
+    this.shapeVertices = [];
+  }
+
+  vertex(x, y) {
+    if (!this.shapeVertices) this.shapeVertices = [];
+    this.shapeVertices.push({ x, y });
+  }
+
+  endShape(close = false) {
+    if (this.shapeVertices && this.shapeVertices.length > 1) {
+      for (let i = 0; i < this.shapeVertices.length - 1; i++) {
+        this.line(
+          this.shapeVertices[i].x,
+          this.shapeVertices[i].y,
+          this.shapeVertices[i + 1].x,
+          this.shapeVertices[i + 1].y
+        );
+      }
+      if (close) {
+        const last = this.shapeVertices.length - 1;
+        this.line(
+          this.shapeVertices[last].x,
+          this.shapeVertices[last].y,
+          this.shapeVertices[0].x,
+          this.shapeVertices[0].y
+        );
+      }
+    }
+  }
+
   push() {
     this.matrixStack.push({ ...this.transform });
   }
@@ -111,12 +425,19 @@ class HeadlessP5 {
   }
 
   rotate(angle) {
-    this.transform.rot += angle;
+    const rad = this.angleModeType === 'degrees' ? (angle * Math.PI) / 180 : angle;
+    this.transform.rot += rad;
   }
 
   scale(s) {
     this.transform.scaleX *= s;
     this.transform.scaleY *= s;
+  }
+
+  shearX(angle) {}
+  shearY(angle) {}
+  resetMatrix() {
+    this.transform = { x: 0, y: 0, rot: 0, scaleX: 1, scaleY: 1 };
   }
 }
 
@@ -176,8 +497,13 @@ function run() {
 
       const p5 = new HeadlessP5(context.width, context.height, context.seed);
 
-      // Create isolated sandbox context
-      const sandboxFn = new Function('p', 'ctx', `
+      // Create sandbox context with global math/p5 aliases
+      const sandboxFn = new Function(
+        'p', 'ctx',
+        'sin', 'cos', 'tan', 'abs', 'sqrt', 'floor', 'ceil', 'round', 'min', 'max', 'pow',
+        'map', 'constrain', 'dist', 'lerp', 'noise', 'random', 'createVector', 'radians', 'degrees', 'sq',
+        'PI', 'TWO_PI', 'TAU', 'HALF_PI', 'QUARTER_PI',
+        `
         ${source}
         if (typeof setup === 'function') {
           setup(p);
@@ -187,7 +513,16 @@ function run() {
         }
       `);
 
-      sandboxFn(p5, context);
+      sandboxFn(
+        p5, context,
+        p5.sin.bind(p5), p5.cos.bind(p5), p5.tan.bind(p5),
+        p5.abs.bind(p5), p5.sqrt.bind(p5), p5.floor.bind(p5), p5.ceil.bind(p5),
+        p5.round.bind(p5), p5.min.bind(p5), p5.max.bind(p5), p5.pow.bind(p5),
+        p5.map.bind(p5), p5.constrain.bind(p5), p5.dist.bind(p5), p5.lerp.bind(p5),
+        p5.noise.bind(p5), p5.random.bind(p5), p5.createVector.bind(p5),
+        p5.radians.bind(p5), p5.degrees.bind(p5), p5.sq.bind(p5),
+        p5.PI, p5.TWO_PI, p5.TAU, p5.HALF_PI, p5.QUARTER_PI
+      );
 
       const asciiArt = renderAsciiPreview(
         p5.commands,

@@ -34,16 +34,23 @@ CONTRACT RULES:
 
     fn strip_code_fences(code: &str) -> String {
         let trimmed = code.trim();
-        let stripped = if trimmed.starts_with("```javascript") {
-            trimmed.trim_start_matches("```javascript")
-        } else if trimmed.starts_with("```js") {
-            trimmed.trim_start_matches("```js")
-        } else if trimmed.starts_with("```") {
-            trimmed.trim_start_matches("```")
-        } else {
-            trimmed
-        };
-        stripped.trim_end_matches("```").trim().to_string()
+        
+        // If there's a code block anywhere in the output, extract it
+        if let Some(start_idx) = trimmed.find("```") {
+            let after_fence = &trimmed[start_idx + 3..];
+            // Skip language tag (e.g. javascript, js) until newline
+            let code_start = if let Some(newline_idx) = after_fence.find('\n') {
+                &after_fence[newline_idx + 1..]
+            } else {
+                after_fence
+            };
+
+            if let Some(end_idx) = code_start.rfind("```") {
+                return code_start[..end_idx].trim().to_string();
+            }
+        }
+
+        trimmed.to_string()
     }
 }
 
@@ -51,7 +58,11 @@ impl SketchGenerator for LlmGenerator {
     fn generate(&self, prompt: &str, seed: u64) -> Result<String, String> {
         let user_prompt = format!("Generate a new p5.js audio-reactive sketch for the prompt: \"{}\". Deterministic seed: {}.", prompt, seed);
         
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
         let payload = json!({
             "model": self.model,
             "messages": [
@@ -64,13 +75,15 @@ impl SketchGenerator for LlmGenerator {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let response = client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", self.api_key.trim()))
             .json(&payload)
             .send()
             .map_err(|e| format!("HTTP request failed: {}", e))?;
 
-        if !response.status().is_success() {
-            return Err(format!("LLM API returned error status: {}", response.status()));
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(format!("LLM API returned error {}: {}", status, error_body));
         }
 
         let json_body: serde_json::Value = response
@@ -90,7 +103,11 @@ impl SketchGenerator for LlmGenerator {
             prompt, seed, current_sketch
         );
 
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
         let payload = json!({
             "model": self.model,
             "messages": [
@@ -103,13 +120,15 @@ impl SketchGenerator for LlmGenerator {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let response = client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", self.api_key.trim()))
             .json(&payload)
             .send()
             .map_err(|e| format!("HTTP request failed: {}", e))?;
 
-        if !response.status().is_success() {
-            return Err(format!("LLM API returned error status: {}", response.status()));
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(format!("LLM API returned error {}: {}", status, error_body));
         }
 
         let json_body: serde_json::Value = response

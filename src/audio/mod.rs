@@ -6,8 +6,10 @@ use sha2::{Digest, Sha256};
 
 pub mod analyzer;
 pub mod decoder;
+pub mod dsp;
 pub mod player;
 
+pub use dsp::{process_features, DspSettings};
 pub use player::AudioPlayer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
@@ -37,6 +39,17 @@ impl AudioAnalysis {
         } else {
             *self.frames.last().unwrap_or(&AudioFeatures::default())
         }
+    }
+
+    pub fn peak_features(&self) -> AudioFeatures {
+        let mut peak = AudioFeatures::default();
+        for f in &self.frames {
+            if f.amplitude > peak.amplitude { peak.amplitude = f.amplitude; }
+            if f.low > peak.low { peak.low = f.low; }
+            if f.mid > peak.mid { peak.mid = f.mid; }
+            if f.high > peak.high { peak.high = f.high; }
+        }
+        peak
     }
 
     #[allow(dead_code)]

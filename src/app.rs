@@ -104,9 +104,61 @@ impl App {
                         }
                     }
                 }
+
+                // Compute real-time DSP-processed audio features for visual engine and UI
+                if let Some(ref analysis) = self.state.audio.analysis {
+                    let raw = analysis.get_features_at_frame(self.state.preview.current_frame);
+                    let peak = analysis.peak_features();
+                    let prev = self.state.live_audio_features;
+                    self.state.live_audio_features = crate::audio::process_features(raw, &self.state.dsp, Some(peak), Some(prev));
+                }
             }
             Action::Resize(w, h) => {
                 self.state.terminal_size = (w, h);
+            }
+            Action::ToggleTuningModal => {
+                self.state.mode = match self.state.mode {
+                    InputMode::Tuning => InputMode::Normal,
+                    _ => InputMode::Tuning,
+                };
+            }
+            Action::TuningNextParam => {
+                self.state.tuning_selected_param = (self.state.tuning_selected_param + 1) % 7;
+            }
+            Action::TuningPrevParam => {
+                self.state.tuning_selected_param = if self.state.tuning_selected_param == 0 {
+                    6
+                } else {
+                    self.state.tuning_selected_param - 1
+                };
+            }
+            Action::TuningIncreaseParam => {
+                match self.state.tuning_selected_param {
+                    0 => self.state.dsp.master_gain = (self.state.dsp.master_gain + 0.1).min(4.0),
+                    1 => self.state.dsp.low_gain = (self.state.dsp.low_gain + 0.1).min(4.0),
+                    2 => self.state.dsp.mid_gain = (self.state.dsp.mid_gain + 0.1).min(4.0),
+                    3 => self.state.dsp.high_gain = (self.state.dsp.high_gain + 0.1).min(4.0),
+                    4 => self.state.dsp.threshold = (self.state.dsp.threshold + 0.01).min(0.5),
+                    5 => self.state.dsp.attack_decay = (self.state.dsp.attack_decay + 0.05).min(0.95),
+                    6 => self.state.dsp.auto_gain = !self.state.dsp.auto_gain,
+                    _ => {}
+                }
+            }
+            Action::TuningDecreaseParam => {
+                match self.state.tuning_selected_param {
+                    0 => self.state.dsp.master_gain = (self.state.dsp.master_gain - 0.1).max(0.1),
+                    1 => self.state.dsp.low_gain = (self.state.dsp.low_gain - 0.1).max(0.1),
+                    2 => self.state.dsp.mid_gain = (self.state.dsp.mid_gain - 0.1).max(0.1),
+                    3 => self.state.dsp.high_gain = (self.state.dsp.high_gain - 0.1).max(0.1),
+                    4 => self.state.dsp.threshold = (self.state.dsp.threshold - 0.01).max(0.0),
+                    5 => self.state.dsp.attack_decay = (self.state.dsp.attack_decay - 0.05).max(0.0),
+                    6 => self.state.dsp.auto_gain = !self.state.dsp.auto_gain,
+                    _ => {}
+                }
+            }
+            Action::TuningResetDefaults => {
+                self.state.dsp = crate::audio::DspSettings::default();
+                self.state.status_message = Some("Reset DSP tuning to default preset".to_string());
             }
             Action::ToggleSelectModel => {
                 self.state.mode = match self.state.mode {
@@ -380,6 +432,7 @@ impl App {
                 KeyCode::Char('p') => Some(Action::EnterPromptEdit),
                 KeyCode::Char('g') => Some(Action::TriggerGenerate),
                 KeyCode::Char(' ') => Some(Action::TogglePlayback),
+                KeyCode::Char('t') | KeyCode::Char('a') => Some(Action::ToggleTuningModal),
                 KeyCode::Char('v') => Some(Action::ToggleVersions),
                 KeyCode::Char('m') => Some(Action::ToggleSelectModel),
                 KeyCode::Char('o') => Some(Action::EnterOpenAudio),
@@ -423,6 +476,21 @@ impl App {
                 KeyCode::Enter => Some(Action::ActivateSelectedEngine),
                 KeyCode::Esc | KeyCode::Char('m') | KeyCode::Char('q') => {
                     Some(Action::ToggleSelectModel)
+                }
+                _ => None,
+            },
+            InputMode::Tuning => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => Some(Action::TuningPrevParam),
+                KeyCode::Down | KeyCode::Char('j') => Some(Action::TuningNextParam),
+                KeyCode::Right | KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Char('l') => {
+                    Some(Action::TuningIncreaseParam)
+                }
+                KeyCode::Left | KeyCode::Char('-') | KeyCode::Char('h') => {
+                    Some(Action::TuningDecreaseParam)
+                }
+                KeyCode::Char('r') => Some(Action::TuningResetDefaults),
+                KeyCode::Esc | KeyCode::Char('t') | KeyCode::Char('a') | KeyCode::Char('q') | KeyCode::Enter => {
+                    Some(Action::ToggleTuningModal)
                 }
                 _ => None,
             },

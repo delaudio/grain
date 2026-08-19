@@ -37,6 +37,7 @@ pub fn render(frame: &mut Frame, state: &GrainState) {
         InputMode::Versions => render_versions_modal(frame, area, state),
         InputMode::OpeningAudio => render_open_audio_modal(frame, area, state),
         InputMode::SelectModel => render_model_selector_modal(frame, area, state),
+        InputMode::Tuning => render_tuning_modal(frame, area, state),
         _ => {}
     }
 }
@@ -49,6 +50,7 @@ fn render_header(frame: &mut Frame, area: Rect, state: &GrainState) {
         InputMode::Help => "HELP",
         InputMode::Versions => "VERSIONS",
         InputMode::SelectModel => "AI ENGINE SELECTOR",
+        InputMode::Tuning => "AUDIO DSP TUNING",
     };
 
     let mode_color = match state.mode {
@@ -58,6 +60,7 @@ fn render_header(frame: &mut Frame, area: Rect, state: &GrainState) {
         InputMode::Help => Color::Green,
         InputMode::Versions => Color::Blue,
         InputMode::SelectModel => Color::LightCyan,
+        InputMode::Tuning => Color::Rgb(255, 180, 0),
     };
 
     let header_layout = Layout::default()
@@ -181,13 +184,11 @@ fn render_preview_area(frame: &mut Frame, area: Rect, state: &GrainState) {
         return;
     }
 
-    use crate::audio::AudioFeatures;
-
-    let features = if let Some(ref analysis) = state.audio.analysis {
-        analysis.get_features_at_frame(state.preview.current_frame)
+    let features = if state.audio.analysis.is_some() {
+        state.live_audio_features
     } else {
         let phase = (((state.preview.current_frame as f64 * 0.1).sin() + 1.0) / 2.0) as f32;
-        AudioFeatures {
+        crate::audio::AudioFeatures {
             amplitude: phase,
             low: phase * 0.8,
             mid: phase * 0.6,
@@ -327,6 +328,8 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &GrainState) {
             Span::raw(" Generate  "),
             Span::styled("Space", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Play/Pause  "),
+            Span::styled("t", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Tuning  "),
             Span::styled("m", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Engine  "),
             Span::styled("v", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -356,6 +359,16 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &GrainState) {
             Span::styled("Enter", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Activate  "),
             Span::styled("Esc / m", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Close Overlay"),
+        ],
+        InputMode::Tuning => vec![
+            Span::styled("↑/↓ / j/k", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Select Param  "),
+            Span::styled("←/→ / +/-", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Adjust  "),
+            Span::styled("r", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Reset  "),
+            Span::styled("Esc / t", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Close Overlay"),
         ],
         InputMode::Help | InputMode::Versions => vec![
@@ -600,6 +613,142 @@ fn render_open_audio_modal(frame: &mut Frame, area: Rect, state: &GrainState) {
     frame.render_widget(p, popup_area);
 }
 
+fn render_tuning_modal(frame: &mut Frame, area: Rect, state: &GrainState) {
+    let popup_area = centered_rect(75, 75, area);
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(Color::Rgb(255, 180, 0)))
+        .title(" 🎛️ Audio Reactivity & DSP Fine-Tuning ");
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    if inner.height < 12 || inner.width < 30 {
+        return;
+    }
+
+    let make_slider = |val: f32, min: f32, max: f32, width: usize| -> String {
+        let norm = ((val - min) / (max - min)).clamp(0.0, 1.0);
+        let pos = ((norm * (width - 1) as f32).round() as usize).min(width - 1);
+        let mut s = String::with_capacity(width + 2);
+        s.push('[');
+        for i in 0..width {
+            if i == pos {
+                s.push('|');
+            } else if i < pos {
+                s.push('-');
+            } else {
+                s.push('-');
+            }
+        }
+        s.push(']');
+        s
+    };
+
+    let make_vu = |val: f32, width: usize| -> String {
+        let filled = ((val.clamp(0.0, 1.0) * width as f32).round() as usize).min(width);
+        "█".repeat(filled) + &"░".repeat(width - filled)
+    };
+
+    let mut text = vec![
+        Line::from(vec![
+            Span::styled("Calibrate Dynamic Range, Sensitivities & Smoothing", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow)),
+            Span::raw("  "),
+            Span::styled("(↑/↓ Select • ←/→ Adjust • 'r' Reset • Esc Close)", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(""),
+    ];
+
+    let params: [(&str, String, &str); 7] = [
+        (
+            "Master Gain",
+            format!("{} {:.1}x", make_slider(state.dsp.master_gain, 0.1, 4.0, 16), state.dsp.master_gain),
+            "Overall audio energy multiplier across all visual channels",
+        ),
+        (
+            "Low / Bass Gain",
+            format!("{} {:.1}x", make_slider(state.dsp.low_gain, 0.1, 4.0, 16), state.dsp.low_gain),
+            "Sensitivity for kick drums, sub-bass, and radial punch",
+        ),
+        (
+            "Mid Gain",
+            format!("{} {:.1}x", make_slider(state.dsp.mid_gain, 0.1, 4.0, 16), state.dsp.mid_gain),
+            "Sensitivity for snares, synths, vocals, and shape morphing",
+        ),
+        (
+            "High / Treble Gain",
+            format!("{} {:.1}x", make_slider(state.dsp.high_gain, 0.1, 4.0, 16), state.dsp.high_gain),
+            "Sensitivity for hi-hats, cymbals, shimmer, and spark bursts",
+        ),
+        (
+            "Noise Gate / Cutoff",
+            format!("{} {:.2}", make_slider(state.dsp.threshold, 0.0, 0.5, 16), state.dsp.threshold),
+            "Threshold floor to eliminate quiet noise and idle visual jitter",
+        ),
+        (
+            "Transient Smoothing",
+            format!("{} {:.2}", make_slider(state.dsp.attack_decay, 0.0, 0.95, 16), state.dsp.attack_decay),
+            "Attack/decay envelope (0.0 = snappy instant, 0.8 = smooth analog)",
+        ),
+        (
+            "Auto Dynamic Range (AGC)",
+            if state.dsp.auto_gain {
+                "[ ON  / off ] Auto-scaled to song peak".to_string()
+            } else {
+                "[ on /  OFF ] Raw fixed scaling".to_string()
+            },
+            "Normalizes quiet or overly loud audio tracks automatically",
+        ),
+    ];
+
+    for (idx, (name, val_str, desc)) in params.iter().enumerate() {
+        let is_selected = idx == state.tuning_selected_param;
+        let cursor = if is_selected { "▶ " } else { "  " };
+
+        let name_style = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        };
+
+        let val_style = if is_selected {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+
+        text.push(Line::from(vec![
+            Span::styled(format!("{}{:<24}", cursor, name), name_style),
+            Span::raw(" "),
+            Span::styled(format!("{:<28}", val_str), val_style),
+            Span::styled(format!("— {}", desc), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    text.push(Line::from(""));
+    text.push(Line::from(Span::styled("── Real-Time Calibrated VU Meters ────────────────────────────", Style::default().fg(Color::DarkGray))));
+
+    let f = state.live_audio_features;
+    text.push(Line::from(vec![
+        Span::styled("  BASS [LOW] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("[{}] {:.2}", make_vu(f.low, 18), f.low), Style::default().fg(Color::Cyan)),
+        Span::styled("   MID [SYNTH] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("[{}] {:.2}", make_vu(f.mid, 18), f.mid), Style::default().fg(Color::Yellow)),
+    ]));
+    text.push(Line::from(vec![
+        Span::styled("  TREB [HIGH]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("[{}] {:.2}", make_vu(f.high, 18), f.high), Style::default().fg(Color::Green)),
+        Span::styled("   AMP [TOTAL] ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("[{}] {:.2}", make_vu(f.amplitude, 18), f.amplitude), Style::default().fg(Color::Magenta)),
+    ]));
+
+    let p = Paragraph::new(text).block(Block::default());
+    frame.render_widget(p, inner);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,6 +789,16 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut state = GrainState::default();
         state.mode = InputMode::SelectModel;
+
+        terminal.draw(|f| render(f, &state)).unwrap();
+    }
+
+    #[test]
+    fn test_ui_renders_tuning_modal() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = GrainState::default();
+        state.mode = InputMode::Tuning;
 
         terminal.draw(|f| render(f, &state)).unwrap();
     }

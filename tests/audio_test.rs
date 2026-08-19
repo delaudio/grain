@@ -104,3 +104,30 @@ fn test_invalid_audio_path() {
     let result = audio::load_or_analyze(invalid_path, 60);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_dsp_processing_and_gains() {
+    use grain::audio::{process_features, AudioFeatures, DspSettings};
+
+    let raw = AudioFeatures {
+        amplitude: 0.5,
+        low: 0.4,
+        mid: 0.3,
+        high: 0.2,
+    };
+    let dsp = DspSettings {
+        master_gain: 1.5,
+        low_gain: 2.0,
+        mid_gain: 1.0,
+        high_gain: 1.0,
+        threshold: 0.05,
+        attack_decay: 0.3,
+        auto_gain: false,
+    };
+
+    let processed = process_features(raw, &dsp, None, None);
+    assert!(processed.low > raw.low);
+    assert!(processed.amplitude > raw.amplitude);
+    assert!(processed.low <= 1.0);
+}
+

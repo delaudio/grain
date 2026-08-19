@@ -9,9 +9,10 @@ pub enum InputMode {
     Help,
     Versions,
     SelectModel,
+    Tuning,
 }
 
-use crate::audio::AudioAnalysis;
+use crate::audio::{AudioAnalysis, AudioFeatures, DspSettings};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -144,6 +145,9 @@ pub struct GrainState {
     pub prompt: PromptInfo,
     pub versions: VersionsState,
     pub engine: EngineSelectionState,
+    pub dsp: DspSettings,
+    pub tuning_selected_param: usize,
+    pub live_audio_features: AudioFeatures,
     pub audio_input_buffer: String,
     pub status_message: Option<String>,
     pub terminal_size: (u16, u16),
@@ -159,6 +163,9 @@ impl Default for GrainState {
             prompt: PromptInfo::default(),
             versions: VersionsState::default(),
             engine: EngineSelectionState::default(),
+            dsp: DspSettings::default(),
+            tuning_selected_param: 0,
+            live_audio_features: AudioFeatures::default(),
             audio_input_buffer: String::new(),
             status_message: Some("Ready. Press '?' for help.".to_string()),
             terminal_size: (80, 24),

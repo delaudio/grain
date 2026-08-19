@@ -9,6 +9,7 @@ mod runtime;
 mod state;
 mod terminal;
 mod ui;
+mod web;
 
 use std::time::Duration;
 use anyhow::Result;
@@ -53,9 +54,12 @@ fn main() -> Result<()> {
         app.load_audio(audio_path);
     }
 
+    let web_state = std::sync::Arc::new(std::sync::RwLock::new(web::WebBridgeState::default()));
+    let web_server = web::WebServer::start(3333, std::sync::Arc::clone(&web_state));
+
     let tick_rate = Duration::from_millis(1000 / args.fps.max(1) as u64);
 
-    let result = run_app(&mut terminal, &mut app, tick_rate);
+    let result = run_app(&mut terminal, &mut app, &web_server, tick_rate);
 
     restore_terminal()?;
 
@@ -66,11 +70,21 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_app(terminal: &mut terminal::Tui, app: &mut App, tick_rate: Duration) -> Result<()> {
+fn run_app(terminal: &mut terminal::Tui, app: &mut App, web_server: &web::WebServer, tick_rate: Duration) -> Result<()> {
     let size = terminal.size()?;
     app.update(Action::Resize(size.width, size.height));
 
     while !app.state.should_quit {
+        // Sync state with web browser live server
+        web_server.update_state(
+            app.state.prompt.current_version,
+            &app.state.preview.sketch_source,
+            app.state.audio.path.clone(),
+            app.state.live_audio_features,
+            app.state.preview.is_playing,
+            app.state.preview.current_frame,
+        );
+
         terminal.draw(|f| ui::render(f, &app.state))?;
 
         if event::poll(tick_rate)? {

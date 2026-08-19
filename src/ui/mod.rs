@@ -330,6 +330,8 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &GrainState) {
             Span::raw(" Play/Pause  "),
             Span::styled("e", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Edit  "),
+            Span::styled("b", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Browser  "),
             Span::styled("t", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw(" Tuning  "),
             Span::styled("m", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -438,6 +440,10 @@ fn render_help_modal(frame: &mut Frame, area: Rect) {
         Line::from(vec![
             Span::styled("  e         ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::raw("Edit active sketch directly in your code editor ($EDITOR)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  b / w     ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw("Open original p5.js canvas in web browser (full-res 60fps)"),
         ]),
         Line::from(vec![
             Span::styled("  t / a     ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),

@@ -426,6 +426,16 @@ impl App {
             Action::OpenInEditor => {
                 // Handled in main loop (suspends TUI, opens $EDITOR)
             }
+            Action::OpenInBrowser => {
+                let url = "http://127.0.0.1:3333";
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open").arg(url).spawn();
+                #[cfg(target_os = "linux")]
+                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                #[cfg(target_os = "windows")]
+                let _ = std::process::Command::new("cmd").args(["/C", "start", url]).spawn();
+                self.state.status_message = Some("🌐 Opened native p5.js canvas in browser at http://localhost:3333".to_string());
+            }
             Action::SetStatusMessage(msg) => {
                 self.state.status_message = Some(msg);
             }
@@ -472,6 +482,7 @@ impl App {
                 KeyCode::Char('v') => Some(Action::ToggleVersions),
                 KeyCode::Char('m') => Some(Action::ToggleSelectModel),
                 KeyCode::Char('e') => Some(Action::OpenInEditor),
+                KeyCode::Char('b') | KeyCode::Char('w') => Some(Action::OpenInBrowser),
                 KeyCode::Char('o') => Some(Action::EnterOpenAudio),
                 _ => None,
             },

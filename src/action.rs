@@ -43,5 +43,6 @@ pub enum Action {
     CommitOpenAudio,
     LoadAudio(PathBuf),
     OpenInEditor,
+    OpenInBrowser,
     SetStatusMessage(String),
 }

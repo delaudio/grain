@@ -1,0 +1,79 @@
+# Grain Recording Scenario (Optimized for Video Demos & Social Formats)
+# Designed to be replayed deterministically via ttry (https://github.com/delaudio/ttry)
+
+name: grain-recording-demo
+description: Presentation-paced Grain terminal recording with audio reactivity & prompt generation
+terminal:
+  cols: 70
+  rows: 32
+  env:
+    GRAIN_AI_MOCK: "1"
+    RUST_BACKTRACE: "1"
+
+command: cargo run --release -- fixtures/demo.wav
+
+steps:
+  # 1. Startup & Audio Analysis Presentation
+  - name: wait_for_ready
+    wait_for: "Track: demo.wav"
+    timeout_ms: 6000
+
+  - name: presentation_pause_audio
+    sleep_ms: 1500
+
+  # 2. Prompt Input Animation
+  - name: enter_prompt
+    send: "p"
+    wait_for: "EDITING PROMPT"
+    sleep_ms: 800
+
+  - name: type_prompt
+    send_text: "geometric audio tunnel"
+    typing_delay_ms: 60
+
+  - name: pause_before_generation
+    sleep_ms: 1000
+
+  # 3. Generate Visual
+  - name: commit_generation
+    send_key: "Enter"
+    wait_for: "Active visual: sketch_v1"
+    timeout_ms: 8000
+
+  # 4. Playback and Live Reactivity Display
+  - name: toggle_playback
+    send: " "
+    sleep_ms: 4000
+
+  # 5. Live Prompt Revision
+  - name: enter_revision_mode
+    send: "p"
+    wait_for: "EDITING PROMPT"
+    sleep_ms: 600
+
+  - name: type_revision
+    send_text: "make it red with high speed"
+    typing_delay_ms: 50
+
+  - name: commit_revision
+    send_key: "Enter"
+    wait_for: "Active visual: sketch_v2"
+    timeout_ms: 8000
+
+  - name: enjoy_revised_visual
+    sleep_ms: 4000
+
+  # 6. Version History Inspection
+  - name: show_versions
+    send: "v"
+    wait_for: "Sketch Version History"
+    sleep_ms: 2500
+
+  - name: close_versions
+    send_key: "Escape"
+    sleep_ms: 1000
+
+  # 7. Clean Finish
+  - name: quit
+    send: "q"
+    assert_exit: 0

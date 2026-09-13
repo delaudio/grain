@@ -1,4 +1,5 @@
 pub mod contract;
+pub mod engine;
 pub mod raster;
 pub mod runner;
 pub mod session;

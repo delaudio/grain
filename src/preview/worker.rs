@@ -30,6 +30,10 @@ pub struct RenderCompletion {
 pub enum OutputTarget {
     Terminal,
     Raw,
+    Iterm2 {
+        area: ratatui::layout::Rect,
+        screen: ratatui::layout::Rect,
+    },
 }
 
 struct TerminalPreparation {
@@ -66,6 +70,9 @@ fn prepare_terminal(output: &FrameOutput, cols: u16, rows: u16) -> TerminalPrepa
 /// Engine output plus optional terminal presentation prepared on the worker.
 /// Requests submitted to the Raw target never perform terminal sampling.
 pub struct EngineCompletion {
+    /// Fully encoded off-thread. On encoding failure, terminal preparation is
+    /// available as a fallback; the engine session itself remains healthy.
+    pub image_packet: Option<Result<Vec<u8>, RuntimeDiagnostic>>,
     pub revision: u64,
     pub engine: EngineId,
     pub result: Result<EngineFrame, RuntimeDiagnostic>,
@@ -311,7 +318,27 @@ impl PreviewWorker {
                         time: request.context.time,
                         output,
                     });
-                    let terminal = if target == OutputTarget::Terminal {
+                    let image_packet = if let OutputTarget::Iterm2 { area, screen } = target {
+                        result.as_ref().ok().and_then(|frame| match &frame.output {
+                            FrameOutput::Raster(raster) => Some(
+                                crate::preview::iterm2::InlineImage::from_canvas(raster)
+                                    .and_then(|image| image.packet(area, screen))
+                                    .map_err(|message| RuntimeDiagnostic {
+                                        message,
+                                        line: None,
+                                        column: None,
+                                        stack: None,
+                                    }),
+                            ),
+                            FrameOutput::Cells(_) => None,
+                        })
+                    } else {
+                        None
+                    };
+                    let needs_terminal = target == OutputTarget::Terminal
+                        || (matches!(target, OutputTarget::Iterm2 { .. })
+                            && !matches!(image_packet, Some(Ok(_))));
+                    let terminal = if needs_terminal {
                         result.as_ref().ok().map(|frame| {
                             prepare_terminal(&frame.output, request.cols, request.rows)
                         })
@@ -334,6 +361,7 @@ impl PreviewWorker {
                         })
                     {
                         mailbox.completed = Some(EngineCompletion {
+                            image_packet,
                             engine,
                             revision: request.revision,
                             result,
@@ -364,6 +392,16 @@ impl PreviewWorker {
     /// Image backends request untouched raster/native output, with no cell conversion.
     pub fn submit_raw_for_engine(&self, engine: EngineId, request: RenderRequest) {
         self.submit_target(engine, request, OutputTarget::Raw);
+    }
+
+    pub fn submit_iterm2_for_engine(
+        &self,
+        engine: EngineId,
+        request: RenderRequest,
+        area: ratatui::layout::Rect,
+        screen: ratatui::layout::Rect,
+    ) {
+        self.submit_target(engine, request, OutputTarget::Iterm2 { area, screen });
     }
 
     fn submit_target(&self, engine: EngineId, request: RenderRequest, target: OutputTarget) {

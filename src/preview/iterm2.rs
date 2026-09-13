@@ -16,6 +16,57 @@ pub struct InlineImage {
 }
 
 impl InlineImage {
+    /// Area-average only the presentation image, never the engine canvas. Color
+    /// is composited before filtering to avoid transparent-color fringes.
+    pub fn from_canvas(frame: &RasterFrame) -> Result<Self, String> {
+        let pixels = u64::from(frame.width) * u64::from(frame.height);
+        if frame.width == 0
+            || frame.height == 0
+            || frame.width > 4096
+            || frame.height > 4096
+            || pixels > 4_194_304
+            || frame.rgba.len() as u64 != pixels * 4
+        {
+            return Err("Invalid source canvas for iTerm2".into());
+        }
+        if pixels <= MAX_IMAGE_PIXELS as u64 {
+            return Self::from_raster(frame);
+        }
+        let scale = (MAX_IMAGE_PIXELS as f64 / pixels as f64).sqrt();
+        let width = ((f64::from(frame.width) * scale).floor() as u32).max(1);
+        let height = ((f64::from(frame.height) * scale).floor() as u32).max(1);
+        let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+        let dx = f64::from(frame.width) / f64::from(width);
+        let dy = f64::from(frame.height) / f64::from(height);
+        for y in 0..height {
+            let top = f64::from(y) * dy;
+            let bottom = f64::from(y + 1) * dy;
+            for x in 0..width {
+                let left = f64::from(x) * dx;
+                let right = f64::from(x + 1) * dx;
+                let mut color = [0.0; 3];
+                for sy in top.floor() as u32..(bottom.ceil() as u32).min(frame.height) {
+                    let wy = bottom.min(f64::from(sy + 1)) - top.max(f64::from(sy));
+                    for sx in left.floor() as u32..(right.ceil() as u32).min(frame.width) {
+                        let weight = wy * (right.min(f64::from(sx + 1)) - left.max(f64::from(sx)));
+                        let offset = (sy as usize * frame.width as usize + sx as usize) * 4;
+                        let alpha = f64::from(frame.rgba[offset + 3]) / 255.0;
+                        for (channel, sum) in color.iter_mut().enumerate() {
+                            *sum += f64::from(frame.rgba[offset + channel]) * alpha * weight;
+                        }
+                    }
+                }
+                rgba.extend(color.map(|sum| (sum / (dx * dy)).round().clamp(0.0, 255.0) as u8));
+                rgba.push(255);
+            }
+        }
+        Self::from_raster(&RasterFrame {
+            width,
+            height,
+            rgba,
+        })
+    }
+
     /// The caller chooses resolution before rendering/encoding. Oversized frames
     /// are rejected rather than silently changing their geometry here.
     pub fn from_raster(frame: &RasterFrame) -> Result<Self, String> {

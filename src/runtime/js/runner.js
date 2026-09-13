@@ -1,7 +1,7 @@
 /**
  * Grain Headless p5.js Runtime Runner
  * Executes p5.js sketches deterministically with frame-aligned audio features
- * and produces TrueColor character cell grids.
+ * and produces bounded raster drawing commands.
  */
 
 function createPRNG(seed) {
@@ -161,6 +161,12 @@ class P5Vector {
   }
 }
 
+// Parsed colors are distinct from raw component arrays: their alpha is already
+// normalized and must not be divided by the active color range a second time.
+class GrainColor {
+  constructor(rgba) { this.rgba = rgba.slice(); }
+}
+
 class HeadlessP5 {
   constructor(width, height, seed) {
     this.width = width;
@@ -174,15 +180,17 @@ class HeadlessP5 {
     this.max1 = 255;
     this.max2 = 255;
     this.max3 = 255;
-    this.maxA = 1;
+    this.maxA = 255;
 
     this.currentFill = [255, 255, 255, 1];
-    this.currentStroke = [0, 200, 255, 1];
+    this.currentStroke = [0, 0, 0, 1];
     this.doFill = true;
     this.doStroke = true;
     this.strokeWidth = 1;
     this.matrixStack = [];
-    this.transform = { x: 0, y: 0, rot: 0, scaleX: 1, scaleY: 1 };
+    this.transform = [1, 0, 0, 1, 0, 0];
+    this.rectModeType = 'corner';
+    this.ellipseModeType = 'center';
     this.angleModeType = 'radians';
 
     // Vector helper
@@ -206,11 +214,15 @@ class HeadlessP5 {
   }
 
   createCanvas(w, h) {
-    if (typeof w === 'number') this.width = w;
-    if (typeof h === 'number') this.height = h;
+    if (!Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0 ||
+        w > 4096 || h > 4096 || w * h > 4194304) {
+      throw new Error('Canvas exceeds dimension or 4 megapixel limit');
+    }
+    this.width = w;
+    this.height = h;
   }
 
-  colorMode(mode, max1 = 255, max2 = 255, max3 = 255, maxA = 1) {
+  colorMode(mode, max1, max2, max3, maxA) {
     const m = String(mode).toLowerCase();
     if (m === 'hsb') {
       this.colorModeType = 'hsb';
@@ -223,17 +235,28 @@ class HeadlessP5 {
       this.max1 = max1 || 255;
       this.max2 = max2 || 255;
       this.max3 = max3 || 255;
-      this.maxA = maxA || 1;
+      this.maxA = maxA || 255;
     }
   }
 
   parseColor(r, g, b, a) {
+    if (r instanceof GrainColor) return r.rgba.slice();
     if (Array.isArray(r)) {
       return this.parseColor(r[0], r[1], r[2], r[3]);
     }
     if (typeof r === 'string') {
-      // Hex or named fallback
-      return [200, 200, 200, 1];
+      const names = { black: '#000000', white: '#ffffff', red: '#ff0000',
+        green: '#008000', blue: '#0000ff', yellow: '#ffff00', cyan: '#00ffff',
+        magenta: '#ff00ff', transparent: '#00000000' };
+      let hex = names[r.toLowerCase()] || r;
+      if (/^#[0-9a-f]{3,4}$/i.test(hex)) {
+        hex = '#' + hex.slice(1).split('').map(c => c + c).join('');
+      }
+      if (!/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(hex)) {
+        throw new Error('Unsupported color: use RGB/HSB components or a hex color');
+      }
+      return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16), hex.length === 9 ? parseInt(hex.slice(7, 9), 16) / 255 : 1];
     }
     if (typeof r === 'number' && g === undefined) {
       // Grayscale
@@ -243,7 +266,7 @@ class HeadlessP5 {
     if (typeof r === 'number' && typeof g === 'number' && b === undefined) {
       // Grayscale + Alpha
       const val = Math.max(0, Math.min(255, Math.round((r / this.max1) * 255)));
-      const alpha = g / (this.max2 || 1);
+      const alpha = g / this.maxA;
       return [val, val, val, alpha];
     }
 
@@ -278,7 +301,9 @@ class HeadlessP5 {
   noLoop() {}
   loop() {}
   redraw() {}
-  blendMode(mode) {}
+  blendMode(mode) {
+    if (mode !== 'source-over' && mode !== 'blend') throw new Error('Unsupported blendMode');
+  }
   cursor() {}
   noCursor() {}
   smooth() {}
@@ -288,17 +313,23 @@ class HeadlessP5 {
     return new P5Vector(x, y, z);
   }
 
-  rectMode(mode) {}
-  ellipseMode(mode) {}
-
-  color(r, g, b, a) {
-    return this.parseColor(r, g, b, a);
+rectMode(mode) {
+    if (!['corner', 'corners', 'center', 'radius'].includes(mode)) throw new Error('Unsupported rectMode');
+    this.rectModeType = mode;
+  }
+  ellipseMode(mode) {
+    if (!['corner', 'corners', 'center', 'radius'].includes(mode)) throw new Error('Unsupported ellipseMode');
+    this.ellipseModeType = mode;
   }
 
-  red(c) { return Array.isArray(c) ? c[0] : 255; }
-  green(c) { return Array.isArray(c) ? c[1] : 255; }
-  blue(c) { return Array.isArray(c) ? c[2] : 255; }
-  alpha(c) { return Array.isArray(c) ? c[3] : 1; }
+  color(r, g, b, a) {
+    return new GrainColor(this.parseColor(r, g, b, a));
+  }
+
+  red(c) { return this.parseColor(c)[0]; }
+  green(c) { return this.parseColor(c)[1]; }
+  blue(c) { return this.parseColor(c)[2]; }
+  alpha(c) { return this.parseColor(c)[3] * this.maxA; }
 
   angleMode(mode) {
     if (mode === 'degrees' || mode === 'DEGREES') {
@@ -367,7 +398,7 @@ class HeadlessP5 {
 
   background(r, g, b, a) {
     const col = this.parseColor(r, g, b, a);
-    this.commands.push({ type: 'background', color: col });
+    this.emit({ type: 'background', color: col });
   }
 
   fill(r, g, b, a) {
@@ -392,265 +423,135 @@ class HeadlessP5 {
     this.strokeWidth = w;
   }
 
-  circle(x, y, d) {
-    this.commands.push({
-      type: 'circle',
-      x: x + this.transform.x,
-      y: y + this.transform.y,
-      radius: d / 2,
-      fill: this.doFill ? this.currentFill : null,
-      stroke: this.doStroke ? this.currentStroke : null
-    });
+  emit(command) {
+    if (this.commands.length >= 4096) throw new Error('Sketch exceeds the 4096 drawing command limit');
+    this.commands.push(command);
   }
 
+  style() {
+    return { matrix: this.transform.slice(), fill: this.doFill ? this.currentFill.slice() : null,
+      stroke: this.doStroke ? this.currentStroke.slice() : null, weight: this.strokeWidth };
+  }
+
+  clear() { this.emit({ type: 'clear' }); }
+
+  circle(x, y, d) { this.ellipse(x, y, d, d); }
+
   ellipse(x, y, w, h = w) {
-    this.commands.push({
-      type: 'circle',
-      x: x + this.transform.x,
-      y: y + this.transform.y,
-      radius: Math.max(w, h) / 2,
-      fill: this.doFill ? this.currentFill : null,
-      stroke: this.doStroke ? this.currentStroke : null
-    });
+    if (this.ellipseModeType === 'corner') { x += w / 2; y += h / 2; }
+    else if (this.ellipseModeType === 'corners') { w -= x; h -= y; x += w / 2; y += h / 2; }
+    else if (this.ellipseModeType === 'radius') { w *= 2; h *= 2; }
+    this.emit({ type: 'ellipse', x, y, w, h, style: this.style() });
   }
 
   point(x, y) {
-    this.commands.push({
-      type: 'point',
-      x: x + this.transform.x,
-      y: y + this.transform.y,
-      stroke: this.doStroke ? this.currentStroke : this.currentFill,
-    });
+    if (!this.doStroke || this.strokeWidth <= 0) return;
+    const style = this.style();
+    style.fill = style.stroke;
+    style.stroke = null;
+    this.emit({ type: 'ellipse', x, y, w: this.strokeWidth, h: this.strokeWidth, style });
   }
 
   rect(x, y, w, h) {
-    this.commands.push({
-      type: 'rect',
-      x: x + this.transform.x,
-      y: y + this.transform.y,
-      w,
-      h,
-      fill: this.doFill ? this.currentFill : null,
-      stroke: this.doStroke ? this.currentStroke : null
-    });
+    if (this.rectModeType === 'center') { x -= w / 2; y -= h / 2; }
+    else if (this.rectModeType === 'radius') { x -= w; y -= h; w *= 2; h *= 2; }
+    else if (this.rectModeType === 'corners') { w -= x; h -= y; }
+    this.emit({ type: 'rect', x, y, w, h, style: this.style() });
   }
 
   line(x1, y1, x2, y2) {
-    this.commands.push({
-      type: 'line',
-      x1: x1 + this.transform.x,
-      y1: y1 + this.transform.y,
-      x2: x2 + this.transform.x,
-      y2: y2 + this.transform.y,
-      stroke: this.currentStroke,
-      weight: this.strokeWidth
-    });
+    const style = this.style();
+    style.fill = null;
+    this.emit({ type: 'path', vertices: [[x1, y1], [x2, y2]], close: false, style });
   }
 
   triangle(x1, y1, x2, y2, x3, y3) {
-    this.line(x1, y1, x2, y2);
-    this.line(x2, y2, x3, y3);
-    this.line(x3, y3, x1, y1);
+    this.emit({ type: 'path', vertices: [[x1, y1], [x2, y2], [x3, y3]], close: true, style: this.style() });
   }
 
   quad(x1, y1, x2, y2, x3, y3, x4, y4) {
-    this.line(x1, y1, x2, y2);
-    this.line(x2, y2, x3, y3);
-    this.line(x3, y3, x4, y4);
-    this.line(x4, y4, x1, y1);
+    this.emit({ type: 'path', vertices: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]], close: true, style: this.style() });
   }
 
-  arc(x, y, w, h, start, stop) {
-    this.ellipse(x, y, w, h);
-  }
+  arc() { throw new Error('arc is not supported by the Grain p5 subset'); }
 
-  beginShape() {
+  beginShape(mode) {
+    if (mode !== undefined) throw new Error('Only vertex paths are supported by beginShape');
     this.shapeVertices = [];
   }
 
   vertex(x, y) {
-    if (!this.shapeVertices) this.shapeVertices = [];
-    this.shapeVertices.push({ x, y });
+    if (!this.shapeVertices) throw new Error('vertex requires beginShape');
+    if (this.shapeVertices.length >= 4096) throw new Error('Sketch exceeds the 4096 vertex limit');
+    this.shapeVertices.push([x, y]);
   }
 
   endShape(close = false) {
-    if (this.shapeVertices && this.shapeVertices.length > 1) {
-      for (let i = 0; i < this.shapeVertices.length - 1; i++) {
-        this.line(
-          this.shapeVertices[i].x,
-          this.shapeVertices[i].y,
-          this.shapeVertices[i + 1].x,
-          this.shapeVertices[i + 1].y
-        );
-      }
-      if (close) {
-        const last = this.shapeVertices.length - 1;
-        this.line(
-          this.shapeVertices[last].x,
-          this.shapeVertices[last].y,
-          this.shapeVertices[0].x,
-          this.shapeVertices[0].y
-        );
-      }
-    }
+    if (!this.shapeVertices) throw new Error('endShape requires beginShape');
+    this.emit({ type: 'path', vertices: this.shapeVertices, close: close === true || close === this.CLOSE, style: this.style() });
+    this.shapeVertices = null;
   }
 
   push() {
-    this.matrixStack.push({ ...this.transform });
+    if (this.matrixStack.length >= 256) throw new Error('Drawing state stack exceeds 256 entries');
+    this.matrixStack.push({ transform: this.transform.slice(), fill: this.currentFill.slice(),
+      stroke: this.currentStroke.slice(), doFill: this.doFill, doStroke: this.doStroke,
+      weight: this.strokeWidth, rectMode: this.rectModeType, ellipseMode: this.ellipseModeType,
+      colorMode: this.colorModeType, ranges: [this.max1, this.max2, this.max3, this.maxA] });
   }
 
   pop() {
-    if (this.matrixStack.length > 0) {
-      this.transform = this.matrixStack.pop();
-    }
+    const state = this.matrixStack.pop();
+    if (!state) throw new Error('pop requires a matching push');
+    this.transform = state.transform;
+    this.currentFill = state.fill; this.currentStroke = state.stroke;
+    this.doFill = state.doFill; this.doStroke = state.doStroke;
+    this.strokeWidth = state.weight;
+    this.rectModeType = state.rectMode; this.ellipseModeType = state.ellipseMode;
+    this.colorModeType = state.colorMode;
+    [this.max1, this.max2, this.max3, this.maxA] = state.ranges;
   }
 
-  translate(x, y) {
-    this.transform.x += x;
-    this.transform.y += y;
+  applyMatrix(a, b, c, d, e, f) {
+    const m = this.transform;
+    this.transform = [m[0] * a + m[2] * b, m[1] * a + m[3] * b,
+      m[0] * c + m[2] * d, m[1] * c + m[3] * d,
+      m[0] * e + m[2] * f + m[4], m[1] * e + m[3] * f + m[5]];
   }
 
+  translate(x, y) { this.applyMatrix(1, 0, 0, 1, x, y); }
   rotate(angle) {
-    const rad = this.angleModeType === 'degrees' ? (angle * Math.PI) / 180 : angle;
-    this.transform.rot += rad;
+    const rad = this.angleModeType === 'degrees' ? this.radians(angle) : angle;
+    const c = Math.cos(rad), s = Math.sin(rad);
+    this.applyMatrix(c, s, -s, c, 0, 0);
   }
-
-  scale(s) {
-    this.transform.scaleX *= s;
-    this.transform.scaleY *= s;
-  }
-
-  shearX(angle) {}
-  shearY(angle) {}
-  resetMatrix() {
-    this.transform = { x: 0, y: 0, rot: 0, scaleX: 1, scaleY: 1 };
-  }
+  scale(x, y = x) { this.applyMatrix(x, 0, 0, y, 0, 0); }
+  shearX(angle) { this.applyMatrix(1, 0, this.tan(angle), 1, 0, 0); }
+  shearY(angle) { this.applyMatrix(1, this.tan(angle), 0, 1, 0, 0); }
+  resetMatrix() { this.transform = [1, 0, 0, 1, 0, 0]; }
 }
 
-function renderCellsAndAscii(commands, width, height, termCols = 54, termRows = 12) {
-  const charRamp = " .:-=+*#%@";
-
-  // Grid of cells with RGB color
-  const cellGrid = Array.from({ length: termRows }, () =>
-    Array.from({ length: termCols }, () => ({ symbol: ' ', r: 0, g: 0, b: 0 }))
-  );
-
-  function setCell(c, r, symbol, color) {
-    if (r >= 0 && r < termRows && c >= 0 && c < termCols) {
-      cellGrid[r][c].symbol = symbol;
-      if (color) {
-        cellGrid[r][c].r = color[0] || 0;
-        cellGrid[r][c].g = color[1] || 0;
-        cellGrid[r][c].b = color[2] || 0;
-      }
-    }
-  }
-
-  for (const cmd of commands) {
-    if (cmd.type === 'circle') {
-      const col = Math.floor((cmd.x / width) * termCols);
-      const row = Math.floor((cmd.y / height) * termRows);
-      const radiusCols = Math.max(1, Math.floor((cmd.radius / width) * termCols));
-      const radiusRows = Math.max(1, Math.floor((cmd.radius / height) * termRows * 0.5));
-      const color = cmd.fill || cmd.stroke || [200, 200, 200];
-
-      for (let r = Math.max(0, row - radiusRows); r <= Math.min(termRows - 1, row + radiusRows); r++) {
-        for (let c = Math.max(0, col - radiusCols); c <= Math.min(termCols - 1, col + radiusCols); c++) {
-          const dx = (c - col) / radiusCols;
-          const dy = (r - row) / radiusRows;
-          const distSq = dx * dx + dy * dy;
-          if (distSq <= 1.0) {
-            const intensity = 1.0 - distSq * 0.4;
-            const charIdx = Math.min(charRamp.length - 1, Math.floor(intensity * (charRamp.length - 1)));
-            setCell(c, r, charRamp[charIdx], color);
-          }
-        }
-      }
-    } else if (cmd.type === 'rect') {
-      const c1 = Math.max(0, Math.floor((cmd.x / width) * termCols));
-      const r1 = Math.max(0, Math.floor((cmd.y / height) * termRows));
-      const c2 = Math.min(termCols - 1, Math.floor(((cmd.x + cmd.w) / width) * termCols));
-      const r2 = Math.min(termRows - 1, Math.floor(((cmd.y + cmd.h) / height) * termRows));
-      const color = cmd.fill || cmd.stroke || [180, 180, 180];
-
-      for (let r = r1; r <= r2; r++) {
-        for (let c = c1; c <= c2; c++) {
-          setCell(c, r, '#', color);
-        }
-      }
-    } else if (cmd.type === 'point') {
-      const c = Math.floor((cmd.x / width) * termCols);
-      const r = Math.floor((cmd.y / height) * termRows);
-      setCell(c, r, '*', cmd.stroke || [255, 255, 255]);
-    } else if (cmd.type === 'line') {
-      // Bresenham's line algorithm on terminal grid
-      const c0 = Math.floor((cmd.x1 / width) * termCols);
-      const r0 = Math.floor((cmd.y1 / height) * termRows);
-      const c1 = Math.floor((cmd.x2 / width) * termCols);
-      const r1 = Math.floor((cmd.y2 / height) * termRows);
-      const color = cmd.stroke || [100, 200, 255];
-
-      let dx = Math.abs(c1 - c0);
-      let dy = Math.abs(r1 - r0);
-      let sx = c0 < c1 ? 1 : -1;
-      let sy = r0 < r1 ? 1 : -1;
-      let err = dx - dy;
-
-      let curX = c0;
-      let curY = r0;
-
-      while (true) {
-        setCell(curX, curY, '+', color);
-        if (curX === c1 && curY === r1) break;
-        let e2 = 2 * err;
-        if (e2 > -dy) {
-          err -= dy;
-          curX += sx;
-        }
-        if (e2 < dx) {
-          err += dx;
-          curY += sy;
-        }
-      }
-    }
-  }
-
-  const asciiArt = cellGrid.map(row => row.map(cell => cell.symbol).join('')).join('\n');
-  return { asciiArt, cells: cellGrid };
-}
-
-function run() {
-  let inputData = '';
-  process.stdin.setEncoding('utf-8');
-
-  process.stdin.on('data', chunk => {
-    inputData += chunk;
-  });
-
-  process.stdin.on('end', () => {
+function run(req) {
+    // Capture before user code can replace the global JSON binding.
+    const stringify = JSON.stringify.bind(JSON);
+    const sourceLineCount = req.source.split('\n').length;
     try {
-      const req = JSON.parse(inputData);
       const { source, context, termCols, termRows } = req;
 
       const p5 = new HeadlessP5(context.width, context.height, context.seed);
 
-      // Create sandbox context with global math/p5 aliases
+      // Aliases are a convenience, not an isolation boundary. The host creates
+      // a capability-free QuickJS runtime with heap, stack and time limits.
       const sandboxFn = new Function(
         'p', 'ctx',
         'sin', 'cos', 'tan', 'abs', 'sqrt', 'floor', 'ceil', 'round', 'min', 'max', 'pow',
         'map', 'constrain', 'dist', 'lerp', 'noise', 'random', 'createVector', 'radians', 'degrees', 'sq',
         'PI', 'TWO_PI', 'TAU', 'HALF_PI', 'QUARTER_PI',
-        `
-        ${source}
-        if (typeof setup === 'function') {
-          setup(p);
-        }
-        if (typeof draw === 'function') {
-          draw(p, ctx);
-        }
+        `${source}
+        return [typeof setup === 'function' ? setup : null, typeof draw === 'function' ? draw : null];
       `);
 
-      sandboxFn(
+      const hooks = sandboxFn(
         p5, context,
         p5.sin.bind(p5), p5.cos.bind(p5), p5.tan.bind(p5),
         p5.abs.bind(p5), p5.sqrt.bind(p5), p5.floor.bind(p5), p5.ceil.bind(p5),
@@ -660,50 +561,53 @@ function run() {
         p5.radians.bind(p5), p5.degrees.bind(p5), p5.sq.bind(p5),
         p5.PI, p5.TWO_PI, p5.TAU, p5.HALF_PI, p5.QUARTER_PI
       );
-
-      const { asciiArt, cells } = renderCellsAndAscii(
-        p5.commands,
-        context.width,
-        context.height,
-        termCols || 54,
-        termRows || 12
-      );
+      if (!hooks[1]) throw new Error('Sketch must define draw(p, ctx)');
+      if (hooks[0]) {
+        const setupResult = hooks[0](p5, context);
+        if (setupResult && typeof setupResult.then === 'function') {
+          throw new Error('setup(p, ctx) must be synchronous');
+        }
+      }
+      const result = hooks[1](p5, context);
+      if (result && typeof result.then === 'function') {
+        throw new Error('draw(p, ctx) must be synchronous');
+      }
 
       const response = {
         success: true,
-        frame: context.frame,
-        width: context.width,
-        height: context.height,
-        ascii_art: asciiArt,
-        cells: cells,
-        draw_commands_count: p5.commands.length
+        width: p5.width,
+        height: p5.height,
+        commands: p5.commands
       };
 
-      process.stdout.write(JSON.stringify(response));
+      return stringify(response);
     } catch (err) {
       let line = null;
       let col = null;
-      if (err.stack) {
-        const match = err.stack.match(/<anonymous>:(\d+):(\d+)/);
+      if (err && typeof err.stack === 'string') {
+        // QuickJS Function bodies start on line 3 of the synthetic <input>
+        // source. The sketch starts at body column 1; helper calls appended
+        // after it must not be reported as locations in the user's sketch.
+        const match = err.stack.match(/<input>:(\d+)(?::(\d+))?/);
         if (match) {
-          line = parseInt(match[1], 10);
-          col = parseInt(match[2], 10);
+          const sourceLine = parseInt(match[1], 10) - 2;
+          if (sourceLine >= 1 && sourceLine <= sourceLineCount) {
+            line = sourceLine;
+            col = match[2] ? parseInt(match[2], 10) : null;
+          }
         }
       }
 
       const errResponse = {
         success: false,
         error: {
-          message: err.message || String(err),
+          message: String(err && err.message || err),
           line,
           column: col,
-          stack: err.stack
+          stack: err && typeof err.stack === 'string' ? err.stack : null
         }
       };
 
-      process.stdout.write(JSON.stringify(errResponse));
+      return stringify(errResponse);
     }
-  });
 }
-
-run();

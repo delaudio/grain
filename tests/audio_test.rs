@@ -1,7 +1,7 @@
+use grain::audio::{self, AudioAnalysis};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
-use grain::audio::{self, AudioAnalysis};
 
 fn create_test_wav(path: &Path, duration_sec: f32, sample_rate: u32, freq_hz: f32) {
     if let Some(parent) = path.parent() {
@@ -26,7 +26,7 @@ fn create_test_wav(path: &Path, duration_sec: f32, sample_rate: u32, freq_hz: f3
     // fmt subchunk
     file.write_all(b"fmt ").unwrap();
     file.write_all(&16u32.to_le_bytes()).unwrap(); // Subchunk1Size (16 for PCM)
-    file.write_all(&1u16.to_le_bytes()).unwrap();  // AudioFormat (1 = PCM)
+    file.write_all(&1u16.to_le_bytes()).unwrap(); // AudioFormat (1 = PCM)
     file.write_all(&num_channels.to_le_bytes()).unwrap();
     file.write_all(&sample_rate.to_le_bytes()).unwrap();
     file.write_all(&byte_rate.to_le_bytes()).unwrap();
@@ -107,7 +107,7 @@ fn test_invalid_audio_path() {
 
 #[test]
 fn test_dsp_processing_and_gains() {
-    use grain::audio::{process_features, AudioFeatures, DspSettings};
+    use grain::audio::{AudioFeatures, DspSettings, process_features};
 
     let raw = AudioFeatures {
         amplitude: 0.5,
@@ -130,4 +130,3 @@ fn test_dsp_processing_and_gains() {
     assert!(processed.amplitude > raw.amplitude);
     assert!(processed.low <= 1.0);
 }
-

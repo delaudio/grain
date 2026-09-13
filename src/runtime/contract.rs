@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::audio::AudioFeatures;
+use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -38,6 +38,16 @@ pub struct TerminalCell {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+    #[serde(default)]
+    pub background: Option<[u8; 3]>,
+}
+
+/// Straight-alpha RGBA8 canvas, independent of terminal glyphs and cell size.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RasterFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -49,6 +59,11 @@ pub struct FrameRenderResult {
     pub ascii_art: Option<String>,
     /// High-fidelity TrueColor cell-by-cell RGB grid
     pub cells: Option<Vec<Vec<TerminalCell>>>,
+    #[serde(default)]
+    pub raster: Option<RasterFrame>,
     /// Visual entities / shapes drawn during the frame
     pub draw_commands_count: usize,
+    /// Assigned by the preview coordinator, not by untrusted sketch code.
+    #[serde(default)]
+    pub revision: u64,
 }

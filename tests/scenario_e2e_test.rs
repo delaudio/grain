@@ -1,12 +1,12 @@
-use std::fs;
-use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::backend::TestBackend;
-use ratatui::Terminal;
 use grain::app::App;
 use grain::history::HistoryManager;
 use grain::state::InputMode;
 use grain::ui;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use std::fs;
+use std::path::PathBuf;
 
 fn send_key(app: &mut App, code: KeyCode) {
     let event = KeyEvent::new(code, KeyModifiers::NONE);
@@ -47,7 +47,13 @@ fn test_mvp_e2e_scenario() {
 
     let history_manager = HistoryManager::new(test_dir.clone());
     let mut app = App::with_history_manager(history_manager);
-    if let Some(idx) = app.state.engine.options.iter().position(|o| matches!(o.kind, grain::generator::EngineKind::OfflineMock)) {
+    if let Some(idx) = app
+        .state
+        .engine
+        .options
+        .iter()
+        .position(|o| matches!(o.kind, grain::generator::EngineKind::OfflineMock))
+    {
         app.state.engine.active_index = idx;
         app.state.engine.selected_index = idx;
     }
@@ -58,15 +64,26 @@ fn test_mvp_e2e_scenario() {
 
     terminal.draw(|f| ui::render(f, &app.state)).unwrap();
     let screen = buffer_to_string(&terminal);
-    assert!(screen.contains("demo.wav"), "Expected audio track in UI: {}", screen);
-    assert!(screen.contains("READY") || screen.contains("Ready"), "Expected Ready status: {}", screen);
+    assert!(
+        screen.contains("demo.wav"),
+        "Expected audio track in UI: {}",
+        screen
+    );
+    assert!(
+        screen.contains("READY") || screen.contains("Ready"),
+        "Expected Ready status: {}",
+        screen
+    );
 
     // 2. Enter Prompt Editing Mode
     send_key(&mut app, KeyCode::Char('p'));
     assert_eq!(app.state.mode, InputMode::EditingPrompt);
     terminal.draw(|f| ui::render(f, &app.state)).unwrap();
     let screen = buffer_to_string(&terminal);
-    assert!(screen.contains("EDITING PROMPT"), "Expected editing mode title");
+    assert!(
+        screen.contains("EDITING PROMPT"),
+        "Expected editing mode title"
+    );
 
     // Clear and enter new prompt
     app.state.prompt.input_buffer.clear();
@@ -83,7 +100,10 @@ fn test_mvp_e2e_scenario() {
     terminal.draw(|f| ui::render(f, &app.state)).unwrap();
     let screen = buffer_to_string(&terminal);
     assert!(screen.contains("sketch_v1"), "Expected sketch_v1 on screen");
-    assert!(screen.contains("Visual Preview"), "Expected Visual Preview block");
+    assert!(
+        screen.contains("Visual Preview"),
+        "Expected Visual Preview block"
+    );
 
     // 4. Revise Sketch
     send_key(&mut app, KeyCode::Char('p'));
@@ -105,9 +125,18 @@ fn test_mvp_e2e_scenario() {
 
     terminal.draw(|f| ui::render(f, &app.state)).unwrap();
     let screen = buffer_to_string(&terminal);
-    assert!(screen.contains("Sketch Version History"), "Expected versions modal");
-    assert!(screen.contains("001 • sketch_v1"), "Expected v1 listed in modal");
-    assert!(screen.contains("002 • sketch_v2"), "Expected v2 listed in modal");
+    assert!(
+        screen.contains("Sketch Version History"),
+        "Expected versions modal"
+    );
+    assert!(
+        screen.contains("001 • sketch_v1"),
+        "Expected v1 listed in modal"
+    );
+    assert!(
+        screen.contains("002 • sketch_v2"),
+        "Expected v2 listed in modal"
+    );
 
     // Close modal
     send_key(&mut app, KeyCode::Esc);

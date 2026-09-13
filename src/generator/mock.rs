@@ -13,7 +13,10 @@ impl SketchGenerator for MockGenerator {
     fn generate(&self, prompt: &str, seed: u64) -> Result<String, String> {
         let p_lower = prompt.to_lowercase();
 
-        if p_lower.contains("tunnel") || p_lower.contains("polygon") || p_lower.contains("geometric") {
+        if p_lower.contains("tunnel")
+            || p_lower.contains("polygon")
+            || p_lower.contains("geometric")
+        {
             Ok(format!(
                 r#"// Grain Generated Sketch: Geometric Audio Tunnel [Seed: {}]
 function setup(p) {{
@@ -37,7 +40,10 @@ function draw(p, ctx) {{
 "#,
                 seed
             ))
-        } else if p_lower.contains("wave") || p_lower.contains("oscillator") || p_lower.contains("sine") {
+        } else if p_lower.contains("wave")
+            || p_lower.contains("oscillator")
+            || p_lower.contains("sine")
+        {
             Ok(format!(
                 r#"// Grain Generated Sketch: Oscillating Sine Wave [Seed: {}]
 function setup(p) {{
@@ -60,7 +66,10 @@ function draw(p, ctx) {{
 "#,
                 seed
             ))
-        } else if p_lower.contains("particle") || p_lower.contains("star") || p_lower.contains("orbit") {
+        } else if p_lower.contains("particle")
+            || p_lower.contains("star")
+            || p_lower.contains("orbit")
+        {
             Ok(format!(
                 r#"// Grain Generated Sketch: Orbital Particle Field [Seed: {}]
 function setup(p) {{

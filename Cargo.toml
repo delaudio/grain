@@ -2,7 +2,28 @@
 name = "grain"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
+autobins = false
 default-run = "grain"
+description = "Audio-reactive creative coding in the terminal"
+license = "MIT"
+repository = "https://github.com/delaudio/grain"
+readme = "README.md"
+keywords = ["creative-coding", "terminal", "audio", "generative-art"]
+categories = ["command-line-utilities", "multimedia"]
+
+[[bin]]
+name = "grain"
+path = "src/main.rs"
+
+[[bin]]
+name = "gen_fixture"
+path = "src/bin/gen_fixture.rs"
+required-features = ["internal-test-fixture"]
+
+[features]
+default = []
+internal-test-fixture = []
 
 [dependencies]
 anyhow = "1.0.104"
@@ -16,3 +37,5 @@ serde_json = "1.0.151"
 sha2 = "0.11.0"
 symphonia = { version = "0.6.1", features = ["mp3", "wav"] }
 rodio = "0.20"
+rquickjs = { version = "0.12.2", default-features = false }
+tiny-skia = "0.12.0"

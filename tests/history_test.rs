@@ -1,8 +1,8 @@
-use std::fs;
-use std::path::PathBuf;
 use grain::action::Action;
 use grain::app::App;
 use grain::history::HistoryManager;
+use std::fs;
+use std::path::PathBuf;
 
 #[test]
 fn test_history_manager_records_and_loads_versions() {
@@ -40,7 +40,9 @@ fn test_history_manager_records_and_loads_versions() {
     assert_eq!(loaded.versions.len(), 2);
     assert_eq!(loaded.active_version, 2);
 
-    let v1_content = manager.load_sketch_content("001.js").expect("load v1 failed");
+    let v1_content = manager
+        .load_sketch_content("001.js")
+        .expect("load v1 failed");
     assert!(v1_content.contains("p.circle(0, 0, 10)"));
 
     let _ = fs::remove_dir_all(&test_dir);
@@ -54,7 +56,13 @@ fn test_app_rollback_action() {
     }
 
     let mut app = App::with_history_manager(HistoryManager::new(test_dir.clone()));
-    if let Some(idx) = app.state.engine.options.iter().position(|o| matches!(o.kind, grain::generator::EngineKind::OfflineMock)) {
+    if let Some(idx) = app
+        .state
+        .engine
+        .options
+        .iter()
+        .position(|o| matches!(o.kind, grain::generator::EngineKind::OfflineMock))
+    {
         app.state.engine.active_index = idx;
         app.state.engine.selected_index = idx;
     }

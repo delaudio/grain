@@ -1,8 +1,8 @@
+use crate::history::record::{GenerationHistory, VersionMetadata};
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use anyhow::{Context, Result};
-use crate::history::record::{GenerationHistory, VersionMetadata};
 
 pub struct HistoryManager {
     grain_dir: PathBuf,
@@ -39,8 +39,8 @@ impl HistoryManager {
         }
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read generations file: {}", path.display()))?;
-        let history: GenerationHistory = serde_json::from_str(&content)
-            .with_context(|| "Failed to parse generations JSON")?;
+        let history: GenerationHistory =
+            serde_json::from_str(&content).with_context(|| "Failed to parse generations JSON")?;
         Ok(history)
     }
 
@@ -98,7 +98,11 @@ impl HistoryManager {
 
     pub fn get_active_sketch_path(&self) -> Result<Option<PathBuf>> {
         let history = self.load_history().unwrap_or_default();
-        if let Some(active) = history.versions.iter().find(|v| v.version == history.active_version) {
+        if let Some(active) = history
+            .versions
+            .iter()
+            .find(|v| v.version == history.active_version)
+        {
             Ok(Some(self.get_sketch_path(&active.sketch_file)))
         } else {
             Ok(None)

@@ -26,6 +26,20 @@ Grain is a terminal application for generating, previewing, and revising audio-r
 
 ## Usage
 
+Sketch evaluation uses embedded QuickJS; Node.js is not required. Sketches have
+no filesystem, network, environment-variable or process APIs. Each evaluation
+is limited to 250 ms of elapsed time (checked by the interpreter), 32 MiB of JS
+heap, 256 KiB of JS stack, 256 KiB of source, and 4 MiB of serialized output.
+Canvas dimensions must be 1..4096 on each axis and terminal output is limited
+to 32,768 cells. Limit violations produce a runtime diagnostic, never a fake
+successful preview. Building from source also requires a C toolchain for QuickJS.
+
+The terminal currently implements a p5-like subset, not the complete browser
+p5.js API. Evaluation is synchronous and starts with fresh sketch state for
+each frame; persistent sketch lifecycle and higher-fidelity drawing are planned.
+The embedded runtime exposes no host capabilities, but runs in the Grain process;
+these limits are not OS process isolation or a hard real-time guarantee.
+
 ```bash
 # Run Grain directly
 cargo run

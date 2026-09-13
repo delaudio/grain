@@ -1,5 +1,5 @@
-use serde_json::json;
 use crate::generator::provider::SketchGenerator;
+use serde_json::json;
 
 pub struct LlmGenerator {
     api_key: String,
@@ -58,7 +58,7 @@ Output ONLY executable JavaScript code in a ```javascript ... ``` codeblock. No 
 
     fn strip_code_fences(code: &str) -> String {
         let trimmed = code.trim();
-        
+
         // If there's a code block anywhere in the output, extract it
         if let Some(start_idx) = trimmed.find("```") {
             let after_fence = &trimmed[start_idx + 3..];
@@ -80,8 +80,11 @@ Output ONLY executable JavaScript code in a ```javascript ... ``` codeblock. No 
 
 impl SketchGenerator for LlmGenerator {
     fn generate(&self, prompt: &str, seed: u64) -> Result<String, String> {
-        let user_prompt = format!("Generate a new p5.js audio-reactive sketch for the prompt: \"{}\". Deterministic seed: {}.", prompt, seed);
-        
+        let user_prompt = format!(
+            "Generate a new p5.js audio-reactive sketch for the prompt: \"{}\". Deterministic seed: {}.",
+            prompt, seed
+        );
+
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -106,7 +109,9 @@ impl SketchGenerator for LlmGenerator {
 
         let status = response.status();
         if !status.is_success() {
-            let error_body = response.text().unwrap_or_else(|_| "Unknown error".to_string());
+            let error_body = response
+                .text()
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(format!("LLM API returned error {}: {}", status, error_body));
         }
 
@@ -151,7 +156,9 @@ impl SketchGenerator for LlmGenerator {
 
         let status = response.status();
         if !status.is_success() {
-            let error_body = response.text().unwrap_or_else(|_| "Unknown error".to_string());
+            let error_body = response
+                .text()
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(format!("LLM API returned error {}: {}", status, error_body));
         }
 

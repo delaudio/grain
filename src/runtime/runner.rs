@@ -1,10 +1,18 @@
-use std::io::Write;
-use std::process::{Command, Stdio};
-use serde::{Deserialize, Serialize};
-use crate::runtime::contract::{FrameRenderResult, GrainContext, RuntimeDiagnostic};
+use std::time::{Duration, Instant};
 
-#[allow(dead_code)]
+use rquickjs::{Context, Runtime};
+use serde::{Deserialize, Serialize};
+
+use crate::runtime::contract::{FrameRenderResult, GrainContext, RuntimeDiagnostic};
+use crate::runtime::raster::{DrawCommand, half_block_cells, render_commands};
+
 const RUNNER_JS: &str = include_str!("js/runner.js");
+const MAX_SOURCE_BYTES: usize = 256 * 1024;
+const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024;
+const MAX_STACK_BYTES: usize = 256 * 1024;
+const MAX_CELLS: usize = 32_768;
+const EVALUATION_BUDGET: Duration = Duration::from_millis(250);
 
 #[derive(Serialize)]
 struct RunnerRequest<'a> {
@@ -19,149 +27,130 @@ struct RunnerRequest<'a> {
 #[derive(Deserialize)]
 struct RunnerResponse {
     success: bool,
-    frame: Option<usize>,
+    commands: Option<Vec<DrawCommand>>,
     width: Option<u32>,
     height: Option<u32>,
-    ascii_art: Option<String>,
-    cells: Option<Vec<Vec<crate::runtime::TerminalCell>>>,
-    draw_commands_count: Option<usize>,
-    error: Option<RunnerErrorResponse>,
+    error: Option<RuntimeDiagnostic>,
 }
 
-#[derive(Deserialize)]
-struct RunnerErrorResponse {
-    message: String,
-    line: Option<usize>,
-    column: Option<usize>,
-    stack: Option<String>,
+fn diagnostic(message: impl Into<String>) -> RuntimeDiagnostic {
+    RuntimeDiagnostic {
+        message: message.into(),
+        line: None,
+        column: None,
+        stack: None,
+    }
 }
 
+/// Evaluate in a fresh, capability-free JavaScript runtime. No host callbacks,
+/// module loader, Node globals, process environment or I/O are exposed.
 pub fn evaluate_frame(
     source: &str,
     context: &GrainContext,
     term_cols: u16,
     term_rows: u16,
 ) -> Result<FrameRenderResult, RuntimeDiagnostic> {
-    // Check if node is available to run full p5.js sandbox
-    let mut child = match Command::new("node")
-        .arg("-e")
-        .arg(RUNNER_JS)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err(diagnostic("Sketch source exceeds the 256 KiB limit"));
+    }
+    if term_cols == 0
+        || term_rows == 0
+        || usize::from(term_cols) * usize::from(term_rows) > MAX_CELLS
+        || context.width == 0
+        || context.height == 0
+        || context.width > 4096
+        || context.height > 4096
     {
-        Ok(c) => c,
-        Err(e) => {
-            // If node is not found, fallback to pure deterministic Rust evaluation
-            return fallback_evaluate_frame(source, context, term_cols, term_rows, e);
-        }
-    };
+        return Err(diagnostic(
+            "Invalid canvas dimensions or terminal cell limit exceeded",
+        ));
+    }
+    if !context.time.is_finite()
+        || ![
+            context.audio.amplitude,
+            context.audio.low,
+            context.audio.mid,
+            context.audio.high,
+        ]
+        .iter()
+        .all(|value| value.is_finite())
+    {
+        return Err(diagnostic("Sketch context must contain finite numbers"));
+    }
 
-    let req = RunnerRequest {
+    let request = serde_json::to_string(&RunnerRequest {
         source,
         context,
         term_cols,
         term_rows,
-    };
+    })
+    .map_err(|error| diagnostic(format!("Cannot encode sketch request: {error}")))?;
 
-    let req_json = serde_json::to_string(&req).map_err(|e| RuntimeDiagnostic {
-        message: format!("Failed to serialize request: {}", e),
-        line: None,
-        column: None,
-        stack: None,
-    })?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(req_json.as_bytes()).map_err(|e| RuntimeDiagnostic {
-            message: format!("Failed to write to runner stdin: {}", e),
-            line: None,
-            column: None,
-            stack: None,
-        })?;
+    let runtime = Runtime::new()
+        .map_err(|error| diagnostic(format!("Cannot initialize JavaScript runtime: {error}")))?;
+    // Keep the default QuickJS allocator: a custom allocator would disable its
+    // memory limit. The deadline covers compilation, drawing and serialization.
+    runtime.set_memory_limit(MAX_MEMORY_BYTES);
+    runtime.set_max_stack_size(MAX_STACK_BYTES);
+    let deadline = Instant::now() + EVALUATION_BUDGET;
+    runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+    let js = Context::full(&runtime)
+        .map_err(|error| diagnostic(format!("Cannot initialize sketch context: {error}")))?;
+    let program = format!("(() => {{\n{RUNNER_JS}\nreturn run({request});\n}})()");
+    // JS allocations, including the returned string, are bounded by the heap
+    // budget. No exception getters or toString hooks are invoked from Rust.
+    let output = js.with(|ctx| ctx.eval::<String, _>(program));
+    if Instant::now() >= deadline {
+        return Err(diagnostic(
+            "Sketch execution exceeded its 250 ms time limit",
+        ));
     }
-
-    let output = child.wait_with_output().map_err(|e| RuntimeDiagnostic {
-        message: format!("Failed to wait for runner process: {}", e),
-        line: None,
-        column: None,
-        stack: None,
+    let output = output.map_err(|error| {
+        diagnostic(format!(
+            "Sketch execution failed (memory/stack limit or JavaScript exception): {error}"
+        ))
     })?;
-
-    let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let res: RunnerResponse = serde_json::from_str(&stdout_str).map_err(|e| RuntimeDiagnostic {
-        message: format!("Failed to parse runner output: {}", e),
-        line: None,
-        column: None,
-        stack: None,
-    })?;
-
-    if res.success {
-        Ok(FrameRenderResult {
-            frame: res.frame.unwrap_or(context.frame),
-            width: res.width.unwrap_or(context.width),
-            height: res.height.unwrap_or(context.height),
-            ascii_art: res.ascii_art,
-            cells: res.cells,
-            draw_commands_count: res.draw_commands_count.unwrap_or(0),
-        })
-    } else if let Some(err) = res.error {
-        Err(RuntimeDiagnostic {
-            message: err.message,
-            line: err.line,
-            column: err.column,
-            stack: err.stack,
-        })
-    } else {
-        Err(RuntimeDiagnostic {
-            message: "Unknown runtime error".to_string(),
-            line: None,
-            column: None,
-            stack: None,
-        })
+    if output.len() > MAX_OUTPUT_BYTES {
+        return Err(diagnostic("Sketch output exceeds the 4 MiB limit"));
     }
-}
-
-fn fallback_evaluate_frame(
-    _source: &str,
-    context: &GrainContext,
-    term_cols: u16,
-    term_rows: u16,
-    _err: std::io::Error,
-) -> Result<FrameRenderResult, RuntimeDiagnostic> {
-    // Pure Rust deterministic fallback preview
-    let cols = term_cols as usize;
-    let rows = term_rows as usize;
-    let mut grid = vec![vec![' '; cols]; rows];
-
-    let cx = cols as f64 / 2.0;
-    let cy = rows as f64 / 2.0;
-    let radius_cols = (cols as f64 * 0.25 * (0.5 + context.audio.amplitude as f64 * 0.5)).max(2.0);
-    let radius_rows = radius_cols * 0.5;
-
-    let char_ramp = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
-
-    for r in 0..rows {
-        for c in 0..cols {
-            let dx = (c as f64 - cx) / radius_cols;
-            let dy = (r as f64 - cy) / radius_rows;
-            let dist_sq = dx * dx + dy * dy;
-            if dist_sq <= 1.0 {
-                let intensity = 1.0 - dist_sq * 0.5;
-                let char_idx = ((intensity * (char_ramp.len() - 1) as f64).round() as usize).min(char_ramp.len() - 1);
-                grid[r][c] = char_ramp[char_idx];
-            }
-        }
+    let response: RunnerResponse = serde_json::from_str(&output)
+        .map_err(|error| diagnostic(format!("Invalid sketch output: {error}")))?;
+    if !response.success {
+        return Err(response
+            .error
+            .unwrap_or_else(|| diagnostic("Sketch evaluation failed")));
     }
-
-    let ascii_art = grid.iter().map(|row| row.iter().collect::<String>()).collect::<Vec<_>>().join("\n");
-
+    let commands = response
+        .commands
+        .ok_or_else(|| diagnostic("Sketch returned no drawing commands"))?;
+    let raster = render_commands(
+        response
+            .width
+            .ok_or_else(|| diagnostic("Sketch returned no canvas width"))?,
+        response
+            .height
+            .ok_or_else(|| diagnostic("Sketch returned no canvas height"))?,
+        &commands,
+    )?;
+    let cells = half_block_cells(&raster, term_cols, term_rows, 2.0, [0, 0, 0]);
+    // Glyphs are generated by Rust, never copied from untrusted JavaScript.
+    let ascii_art = cells
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     Ok(FrameRenderResult {
         frame: context.frame,
-        width: context.width,
-        height: context.height,
+        width: raster.width,
+        height: raster.height,
         ascii_art: Some(ascii_art),
-        cells: None,
-        draw_commands_count: 1,
+        cells: Some(cells),
+        raster: Some(raster),
+        draw_commands_count: commands.len(),
+        revision: 0,
     })
 }

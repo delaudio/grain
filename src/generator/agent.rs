@@ -1,5 +1,5 @@
-use std::process::Command;
 use crate::generator::provider::SketchGenerator;
+use std::process::Command;
 
 pub struct AgentCliGenerator {
     pub command: String,
@@ -13,10 +13,7 @@ impl AgentCliGenerator {
     }
 
     pub fn claude(model: Option<&str>) -> Self {
-        let mut args = vec![
-            "-p".to_string(),
-            "--no-session-persistence".to_string(),
-        ];
+        let mut args = vec!["-p".to_string(), "--no-session-persistence".to_string()];
         if let Some(m) = model {
             let m_lower = m.trim().to_lowercase();
             // Only pass --model if it's a recognized Claude model

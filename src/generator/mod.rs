@@ -14,4 +14,4 @@ pub use provider::SketchGenerator;
 #[allow(unused_imports, dead_code)]
 pub use registry::{EngineKind, EngineOption, EngineSelectionState};
 #[allow(unused_imports, dead_code)]
-pub use service::{create_default_generator, GenerationService};
+pub use service::{GenerationService, create_default_generator};

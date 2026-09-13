@@ -1,8 +1,13 @@
-use std::path::PathBuf;
 use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "grain", author, version, about = "Terminal-first audio-reactive creative coding instrument")]
+#[command(
+    name = "grain",
+    author,
+    version,
+    about = "Terminal-first audio-reactive creative coding instrument"
+)]
 pub struct Cli {
     /// Path to an audio file (WAV or MP3)
     #[arg(value_name = "AUDIO_FILE")]

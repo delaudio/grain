@@ -1,7 +1,7 @@
-use rustfft::num_complex::Complex;
-use rustfft::FftPlanner;
 use crate::audio::decoder::DecodedAudio;
 use crate::audio::{AudioAnalysis, AudioFeatures};
+use rustfft::FftPlanner;
+use rustfft::num_complex::Complex;
 
 pub fn analyze_decoded_audio(decoded: &DecodedAudio, fps: u32) -> AudioAnalysis {
     let total_samples = decoded.samples.len();
@@ -12,7 +12,7 @@ pub fn analyze_decoded_audio(decoded: &DecodedAudio, fps: u32) -> AudioAnalysis 
     let total_frames = if total_samples == 0 || samples_per_frame == 0 {
         0
     } else {
-        (total_samples + samples_per_frame - 1) / samples_per_frame
+        total_samples.div_ceil(samples_per_frame)
     };
 
     let fft_size = 2048.min(total_samples.next_power_of_two().max(256));
@@ -21,7 +21,9 @@ pub fn analyze_decoded_audio(decoded: &DecodedAudio, fps: u32) -> AudioAnalysis 
 
     // Precalculate Hann window
     let hann_window: Vec<f32> = (0..fft_size)
-        .map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (fft_size as f32 - 1.0)).cos()))
+        .map(|i| {
+            0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (fft_size as f32 - 1.0)).cos())
+        })
         .collect();
 
     let mut frames = Vec::with_capacity(total_frames);
@@ -53,14 +55,17 @@ pub fn analyze_decoded_audio(decoded: &DecodedAudio, fps: u32) -> AudioAnalysis 
 
         // 2. FFT Spectral Analysis
         let mut buffer: Vec<Complex<f32>> = Vec::with_capacity(fft_size);
-        for i in 0..fft_size {
+        for (i, window) in hann_window.iter().enumerate() {
             let sample_idx = start_sample + i;
             let sample = if sample_idx < end_sample {
-                decoded.samples[sample_idx] * hann_window[i]
+                decoded.samples[sample_idx] * window
             } else {
                 0.0
             };
-            buffer.push(Complex { re: sample, im: 0.0 });
+            buffer.push(Complex {
+                re: sample,
+                im: 0.0,
+            });
         }
 
         fft.process(&mut buffer);
@@ -74,9 +79,9 @@ pub fn analyze_decoded_audio(decoded: &DecodedAudio, fps: u32) -> AudioAnalysis 
         let mut mid_count = 0.0f32;
         let mut high_count = 0.0f32;
 
-        for k in 1..half_bins {
+        for (k, bin) in buffer.iter().enumerate().take(half_bins).skip(1) {
             let freq = k as f32 * bin_freq;
-            let mag = buffer[k].norm();
+            let mag = bin.norm();
 
             if (20.0..=250.0).contains(&freq) {
                 low_energy += mag;

@@ -47,7 +47,7 @@ impl Default for AudioInfo {
     }
 }
 
-use crate::runtime::{FrameRenderResult, RuntimeDiagnostic, DEFAULT_SKETCH_TEMPLATE};
+use crate::runtime::{DEFAULT_SKETCH_TEMPLATE, FrameRenderResult, RuntimeDiagnostic};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

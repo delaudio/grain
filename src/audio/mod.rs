@@ -1,15 +1,15 @@
-use std::fs;
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub mod analyzer;
 pub mod decoder;
 pub mod dsp;
 pub mod player;
 
-pub use dsp::{process_features, DspSettings};
+pub use dsp::{DspSettings, process_features};
 pub use player::AudioPlayer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
@@ -44,10 +44,18 @@ impl AudioAnalysis {
     pub fn peak_features(&self) -> AudioFeatures {
         let mut peak = AudioFeatures::default();
         for f in &self.frames {
-            if f.amplitude > peak.amplitude { peak.amplitude = f.amplitude; }
-            if f.low > peak.low { peak.low = f.low; }
-            if f.mid > peak.mid { peak.mid = f.mid; }
-            if f.high > peak.high { peak.high = f.high; }
+            if f.amplitude > peak.amplitude {
+                peak.amplitude = f.amplitude;
+            }
+            if f.low > peak.low {
+                peak.low = f.low;
+            }
+            if f.mid > peak.mid {
+                peak.mid = f.mid;
+            }
+            if f.high > peak.high {
+                peak.high = f.high;
+            }
         }
         peak
     }
@@ -82,10 +90,15 @@ impl AudioAnalysis {
 }
 
 pub fn get_cache_path(audio_path: &Path, fps: u32) -> Result<PathBuf> {
-    let bytes = fs::read(audio_path).with_context(|| format!("Failed to read audio file: {}", audio_path.display()))?;
+    let bytes = fs::read(audio_path)
+        .with_context(|| format!("Failed to read audio file: {}", audio_path.display()))?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+    let hash = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
 
     let cache_dir = PathBuf::from(".grain").join("cache");
     Ok(cache_dir.join(format!("{}_{}fps.json", hash, fps)))
@@ -94,12 +107,11 @@ pub fn get_cache_path(audio_path: &Path, fps: u32) -> Result<PathBuf> {
 pub fn load_or_analyze(audio_path: &Path, fps: u32) -> Result<AudioAnalysis> {
     let cache_path = get_cache_path(audio_path, fps).ok();
 
-    if let Some(ref cp) = cache_path {
-        if cp.exists() {
-            if let Ok(analysis) = AudioAnalysis::load_from_file(cp) {
-                return Ok(analysis);
-            }
-        }
+    if let Some(ref cp) = cache_path
+        && cp.exists()
+        && let Ok(analysis) = AudioAnalysis::load_from_file(cp)
+    {
+        return Ok(analysis);
     }
 
     let decoded = decoder::decode_audio_file(audio_path)?;

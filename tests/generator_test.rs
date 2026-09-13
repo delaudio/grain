@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use grain::generator::{GenerationService, MockGenerator, SketchGenerator};
+use std::sync::Arc;
 
 #[test]
 fn test_mock_generator_generates_valid_sketch() {

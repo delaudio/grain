@@ -1,10 +1,10 @@
+use crate::audio::AudioFeatures;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::thread;
-use crate::audio::AudioFeatures;
 
 #[derive(Debug, Clone, Default)]
 pub struct WebBridgeState {
@@ -50,7 +50,15 @@ impl WebServer {
         Self { port, state }
     }
 
-    pub fn update_state(&self, version: usize, source: &str, audio_path: Option<PathBuf>, features: AudioFeatures, is_playing: bool, frame: usize) {
+    pub fn update_state(
+        &self,
+        version: usize,
+        source: &str,
+        audio_path: Option<PathBuf>,
+        features: AudioFeatures,
+        is_playing: bool,
+        frame: usize,
+    ) {
         if let Ok(mut lock) = self.state.write() {
             lock.version = version;
             lock.sketch_source = source.to_string();
@@ -62,7 +70,10 @@ impl WebServer {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, state: Arc<RwLock<WebBridgeState>>) -> std::io::Result<()> {
+fn handle_connection(
+    mut stream: TcpStream,
+    state: Arc<RwLock<WebBridgeState>>,
+) -> std::io::Result<()> {
     let mut buffer = [0u8; 4096];
     let bytes_read = stream.read(&mut buffer)?;
     if bytes_read == 0 {
@@ -113,7 +124,12 @@ fn handle_connection(mut stream: TcpStream, state: Arc<RwLock<WebBridgeState>>) 
         "/api/state" => {
             let (ver, audio, is_playing, frame) = {
                 let lock = state.read().unwrap();
-                (lock.version, lock.live_audio, lock.is_playing, lock.current_frame)
+                (
+                    lock.version,
+                    lock.live_audio,
+                    lock.is_playing,
+                    lock.current_frame,
+                )
             };
             let json = serde_json::json!({
                 "version": ver,
@@ -125,7 +141,8 @@ fn handle_connection(mut stream: TcpStream, state: Arc<RwLock<WebBridgeState>>) 
                     "mid": audio.mid,
                     "high": audio.high
                 }
-            }).to_string();
+            })
+            .to_string();
 
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
@@ -140,24 +157,24 @@ fn handle_connection(mut stream: TcpStream, state: Arc<RwLock<WebBridgeState>>) 
                 lock.audio_path.clone()
             };
 
-            if let Some(path) = audio_path {
-                if let Ok(mut file) = File::open(&path) {
-                    let mut data = Vec::new();
-                    if file.read_to_end(&mut data).is_ok() {
-                        let mime = if path.extension().and_then(|e| e.to_str()) == Some("mp3") {
-                            "audio/mpeg"
-                        } else {
-                            "audio/wav"
-                        };
-                        let header = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n\r\n",
-                            mime,
-                            data.len()
-                        );
-                        stream.write_all(header.as_bytes())?;
-                        stream.write_all(&data)?;
-                        return Ok(());
-                    }
+            if let Some(path) = audio_path
+                && let Ok(mut file) = File::open(&path)
+            {
+                let mut data = Vec::new();
+                if file.read_to_end(&mut data).is_ok() {
+                    let mime = if path.extension().and_then(|e| e.to_str()) == Some("mp3") {
+                        "audio/mpeg"
+                    } else {
+                        "audio/wav"
+                    };
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n\r\n",
+                        mime,
+                        data.len()
+                    );
+                    stream.write_all(header.as_bytes())?;
+                    stream.write_all(&data)?;
+                    return Ok(());
                 }
             }
 

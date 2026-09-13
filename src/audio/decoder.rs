@@ -1,11 +1,11 @@
+use anyhow::{Context, Result, bail};
 use std::fs::File;
 use std::path::Path;
-use anyhow::{bail, Context, Result};
-use symphonia::core::codecs::audio::{AudioDecoderOptions, CODEC_ID_NULL_AUDIO};
 use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::{AudioDecoderOptions, CODEC_ID_NULL_AUDIO};
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
@@ -82,7 +82,9 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
                 decoder.reset();
                 continue;
             }
-            Err(SymphoniaError::IoError(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            Err(SymphoniaError::IoError(ref e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
                 break;
             }
             Err(SymphoniaError::IoError(_)) => {

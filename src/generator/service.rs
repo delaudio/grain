@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use crate::audio::AudioFeatures;
 use crate::generator::llm::LlmGenerator;
 use crate::generator::mock::MockGenerator;
 use crate::generator::provider::SketchGenerator;
-use crate::runtime::{evaluate_frame, GrainContext};
+use crate::runtime::{GrainContext, evaluate_frame};
+use std::sync::Arc;
 
 pub struct GenerationService {
     generator: Arc<dyn SketchGenerator>,
@@ -48,7 +48,10 @@ impl GenerationService {
 
         match evaluate_frame(code, &dummy_ctx, 40, 10) {
             Ok(_) => Ok(()),
-            Err(diag) => Err(format!("Generated sketch failed runtime validation: {}", diag)),
+            Err(diag) => Err(format!(
+                "Generated sketch failed runtime validation: {}",
+                diag
+            )),
         }
     }
 }
@@ -57,58 +60,66 @@ use crate::generator::agent::AgentCliGenerator;
 
 pub fn create_default_generator() -> GenerationService {
     // 1. Direct custom CLI command (e.g. GRAIN_GENERATOR_CMD="claude -p" or "codex exec")
-    if let Ok(cmd) = std::env::var("GRAIN_GENERATOR_CMD") {
-        if !cmd.trim().is_empty() {
-            return GenerationService::new(Arc::new(AgentCliGenerator::custom(&cmd)));
-        }
+    if let Ok(cmd) = std::env::var("GRAIN_GENERATOR_CMD")
+        && !cmd.trim().is_empty()
+    {
+        return GenerationService::new(Arc::new(AgentCliGenerator::custom(&cmd)));
     }
 
     // 2. Named agent provider (e.g. GRAIN_AI_PROVIDER="claude" or "codex")
-    let provider = std::env::var("GRAIN_AI_PROVIDER").ok().map(|s| s.to_lowercase());
+    let provider = std::env::var("GRAIN_AI_PROVIDER")
+        .ok()
+        .map(|s| s.to_lowercase());
 
     if let Some(ref p) = provider {
         if p == "claude" || p == "claude-code" {
             let claude_model = std::env::var("GRAIN_CLAUDE_MODEL")
                 .or_else(|_| std::env::var("GRAIN_LLM_MODEL"))
                 .ok();
-            return GenerationService::new(Arc::new(AgentCliGenerator::claude(claude_model.as_deref())));
+            return GenerationService::new(Arc::new(AgentCliGenerator::claude(
+                claude_model.as_deref(),
+            )));
         } else if p == "codex" {
             let codex_model = std::env::var("GRAIN_CODEX_MODEL")
                 .or_else(|_| std::env::var("GRAIN_LLM_MODEL"))
                 .ok();
-            return GenerationService::new(Arc::new(AgentCliGenerator::codex(codex_model.as_deref())));
+            return GenerationService::new(Arc::new(AgentCliGenerator::codex(
+                codex_model.as_deref(),
+            )));
         }
     }
 
     // 3. API Key based LLM (OpenAI / OpenRouter / Anthropic / Local API)
-    let mut key = std::env::var("GRAIN_AI_KEY").or_else(|_| std::env::var("OPENAI_API_KEY")).ok();
+    let mut key = std::env::var("GRAIN_AI_KEY")
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        .ok();
 
-    if key.is_none() {
-        if let Ok(content) = std::fs::read_to_string(".env") {
-            for line in content.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                if let Some((k, v)) = line.split_once('=') {
-                    let k = k.trim();
-                    let v = v.trim().trim_matches('"').trim_matches('\'');
-                    if (k == "OPENAI_API_KEY" || k == "GRAIN_AI_KEY") && !v.is_empty() {
-                        key = Some(v.to_string());
-                        break;
-                    }
+    if key.is_none()
+        && let Ok(content) = std::fs::read_to_string(".env")
+    {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                let k = k.trim();
+                let v = v.trim().trim_matches('"').trim_matches('\'');
+                if (k == "OPENAI_API_KEY" || k == "GRAIN_AI_KEY") && !v.is_empty() {
+                    key = Some(v.to_string());
+                    break;
                 }
             }
         }
     }
 
-    if let Some(key_str) = key {
-        if !key_str.trim().is_empty() {
-            let base_url = std::env::var("OPENAI_BASE_URL").ok();
-            let model = std::env::var("GRAIN_LLM_MODEL").ok();
-            let llm = LlmGenerator::new(key_str, base_url, model);
-            return GenerationService::new(Arc::new(llm));
-        }
+    if let Some(key_str) = key
+        && !key_str.trim().is_empty()
+    {
+        let base_url = std::env::var("OPENAI_BASE_URL").ok();
+        let model = std::env::var("GRAIN_LLM_MODEL").ok();
+        let llm = LlmGenerator::new(key_str, base_url, model);
+        return GenerationService::new(Arc::new(llm));
     }
 
     // 4. Default offline fixture generator

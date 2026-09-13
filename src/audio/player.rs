@@ -1,14 +1,21 @@
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 
 pub struct AudioPlayer {
     _stream: Option<OutputStream>,
     stream_handle: Option<OutputStreamHandle>,
     sink: Option<Sink>,
     current_path: Option<PathBuf>,
+    generation: u64,
+}
+
+impl Default for AudioPlayer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AudioPlayer {
@@ -21,6 +28,7 @@ impl AudioPlayer {
                     stream_handle: Some(stream_handle),
                     sink,
                     current_path: None,
+                    generation: 0,
                 }
             }
             Err(_) => {
@@ -30,6 +38,7 @@ impl AudioPlayer {
                     stream_handle: None,
                     sink: None,
                     current_path: None,
+                    generation: 0,
                 }
             }
         }
@@ -42,17 +51,20 @@ impl AudioPlayer {
     }
 
     fn reset_sink(&mut self) -> Result<(), String> {
-        if let Some(ref handle) = self.stream_handle {
-            if let Some(ref path) = self.current_path {
-                let file = File::open(path).map_err(|e| format!("Failed to open audio: {}", e))?;
-                let reader = BufReader::new(file);
-                let source = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
+        if let Some(ref handle) = self.stream_handle
+            && let Some(ref path) = self.current_path
+        {
+            let file = File::open(path).map_err(|e| format!("Failed to open audio: {}", e))?;
+            let reader = BufReader::new(file);
+            let source =
+                Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
 
-                let new_sink = Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {}", e))?;
-                new_sink.append(source);
-                new_sink.pause();
-                self.sink = Some(new_sink);
-            }
+            let new_sink =
+                Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {}", e))?;
+            new_sink.append(source);
+            new_sink.pause();
+            self.sink = Some(new_sink);
+            self.generation = self.generation.wrapping_add(1);
         }
         Ok(())
     }
@@ -77,6 +89,16 @@ impl AudioPlayer {
         }
     }
 
+    /// Position reported by the audio sink, including pauses and seeks.
+    pub fn position(&self) -> Option<Duration> {
+        self.current_path.as_ref()?;
+        self.sink.as_ref().map(Sink::get_pos)
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn restart(&mut self) {
         let _ = self.reset_sink();
         if let Some(ref sink) = self.sink {
@@ -95,6 +117,9 @@ impl AudioPlayer {
 
     #[allow(dead_code)]
     pub fn is_playing(&self) -> bool {
-        self.sink.as_ref().map(|s| !s.is_paused() && !s.empty()).unwrap_or(false)
+        self.sink
+            .as_ref()
+            .map(|s| !s.is_paused() && !s.empty())
+            .unwrap_or(false)
     }
 }

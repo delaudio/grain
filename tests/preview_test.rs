@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use ratatui::layout::Rect;
 use grain::audio::AudioFeatures;
 use grain::preview::{AnsiPreviewBackend, PreviewEngine, RattyTerminalBackend};
+use ratatui::layout::Rect;
+use std::sync::Arc;
 
 #[test]
 fn test_preview_engine_renders_ansi_backend() {

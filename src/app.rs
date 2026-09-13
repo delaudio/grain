@@ -1,16 +1,27 @@
-use std::path::PathBuf;
-use std::time::SystemTime;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::action::Action;
 use crate::state::{AudioStatus, GenerationStatus, GrainState, InputMode, PreviewStatus};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::path::PathBuf;
+use std::time::{Instant, SystemTime};
 
 use crate::history::HistoryManager;
+
+type PreviewSignature = (String, u64, u32, u32, u16, u16);
 
 pub struct App {
     pub state: GrainState,
     pub history_manager: HistoryManager,
     pub audio_player: crate::audio::AudioPlayer,
     pub last_watched_mtime: Option<SystemTime>,
+    preview_worker: Option<crate::preview::worker::PreviewWorker>,
+    preview_signature: Option<PreviewSignature>,
+    preview_revision: u64,
+    preview_lifecycle: u64,
+    playback_loop: usize,
+    audio_generation: u64,
+    requested_frame: Option<usize>,
+    requested_audio: Option<crate::audio::AudioFeatures>,
+    playback_clock: crate::preview::clock::PlaybackClock,
 }
 
 impl Default for App {
@@ -28,33 +39,54 @@ impl App {
         let mut state = GrainState::default();
         let mut last_watched_mtime = None;
 
-        if let Ok(history) = history_manager.load_history() {
-            if !history.versions.is_empty() {
-                state.prompt.total_versions = history.versions.len();
-                state.prompt.current_version = history.active_version;
-                state.versions.selected_index = history.active_version.saturating_sub(1);
-                state.versions.history = history.clone();
+        if let Ok(history) = history_manager.load_history()
+            && !history.versions.is_empty()
+        {
+            state.prompt.total_versions = history.versions.len();
+            state.prompt.current_version = history.active_version;
+            state.versions.selected_index = history.active_version.saturating_sub(1);
+            state.versions.history = history.clone();
 
-                if let Some(active_meta) = history.versions.iter().find(|v| v.version == history.active_version) {
-                    state.prompt.active_prompt = active_meta.prompt.clone();
-                    state.preview.sketch_name = format!("sketch_v{}", active_meta.version);
-                    if let Ok(code) = history_manager.load_sketch_content(&active_meta.sketch_file) {
-                        state.preview.sketch_source = code;
-                        state.preview.status = PreviewStatus::Ready;
-                    }
-                    let p = history_manager.get_sketch_path(&active_meta.sketch_file);
-                    if let Ok(meta) = std::fs::metadata(&p) {
-                        last_watched_mtime = meta.modified().ok();
-                    }
+            if let Some(active_meta) = history
+                .versions
+                .iter()
+                .find(|v| v.version == history.active_version)
+            {
+                state.preview.seed = active_meta.seed;
+                state.prompt.active_prompt = active_meta.prompt.clone();
+                state.preview.sketch_name = format!("sketch_v{}", active_meta.version);
+                if let Ok(code) = history_manager.load_sketch_content(&active_meta.sketch_file) {
+                    state.preview.sketch_source = code;
+                    state.preview.status = PreviewStatus::Ready;
+                }
+                let p = history_manager.get_sketch_path(&active_meta.sketch_file);
+                if let Ok(meta) = std::fs::metadata(&p) {
+                    last_watched_mtime = meta.modified().ok();
                 }
             }
         }
 
+        let preview_worker = match crate::preview::worker::PreviewWorker::new() {
+            Ok(worker) => Some(worker),
+            Err(error) => {
+                state.status_message = Some(format!("Cannot start preview worker: {error}"));
+                None
+            }
+        };
         Self {
             state,
             history_manager,
             audio_player: crate::audio::AudioPlayer::new(),
             last_watched_mtime,
+            preview_worker,
+            preview_signature: None,
+            preview_revision: 0,
+            preview_lifecycle: 0,
+            playback_loop: 0,
+            audio_generation: 0,
+            requested_frame: None,
+            requested_audio: None,
+            playback_clock: crate::preview::clock::PlaybackClock::default(),
         }
     }
 
@@ -70,6 +102,12 @@ impl App {
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
+        self.playback_clock.reset(Instant::now());
+        self.preview_lifecycle = self.preview_lifecycle.wrapping_add(1);
+        self.preview_revision = self.preview_revision.wrapping_add(1);
+        self.requested_frame = None;
+        self.playback_loop = 0;
+        self.state.preview.current_frame = 0;
         self.state.audio.path = Some(path.clone());
         self.state.audio.status = AudioStatus::Loading;
         self.state.status_message = Some(format!("Analyzing audio: {}", file_name));
@@ -103,22 +141,19 @@ impl App {
                 self.state.should_quit = true;
             }
             Action::Tick => {
-                if self.state.preview.is_playing {
-                    if self.state.preview.total_frames > 0 {
-                        let prev_frame = self.state.preview.current_frame;
-                        self.state.preview.current_frame = (self.state.preview.current_frame + 1) % self.state.preview.total_frames;
-                        if self.state.preview.current_frame < prev_frame {
-                            self.audio_player.restart();
-                        }
-                    }
-                }
+                self.advance_playback(Instant::now());
 
                 // Compute real-time DSP-processed audio features for visual engine and UI
                 if let Some(ref analysis) = self.state.audio.analysis {
                     let raw = analysis.get_features_at_frame(self.state.preview.current_frame);
                     let peak = analysis.peak_features();
                     let prev = self.state.live_audio_features;
-                    self.state.live_audio_features = crate::audio::process_features(raw, &self.state.dsp, Some(peak), Some(prev));
+                    self.state.live_audio_features = crate::audio::process_features(
+                        raw,
+                        &self.state.dsp,
+                        Some(peak),
+                        Some(prev),
+                    );
                 }
 
                 // Check for external file modifications in .grain/sketches/ and hot reload live
@@ -143,30 +178,26 @@ impl App {
                     self.state.tuning_selected_param - 1
                 };
             }
-            Action::TuningIncreaseParam => {
-                match self.state.tuning_selected_param {
-                    0 => self.state.dsp.master_gain = (self.state.dsp.master_gain + 0.1).min(4.0),
-                    1 => self.state.dsp.low_gain = (self.state.dsp.low_gain + 0.1).min(4.0),
-                    2 => self.state.dsp.mid_gain = (self.state.dsp.mid_gain + 0.1).min(4.0),
-                    3 => self.state.dsp.high_gain = (self.state.dsp.high_gain + 0.1).min(4.0),
-                    4 => self.state.dsp.threshold = (self.state.dsp.threshold + 0.01).min(0.5),
-                    5 => self.state.dsp.attack_decay = (self.state.dsp.attack_decay + 0.05).min(0.95),
-                    6 => self.state.dsp.auto_gain = !self.state.dsp.auto_gain,
-                    _ => {}
-                }
-            }
-            Action::TuningDecreaseParam => {
-                match self.state.tuning_selected_param {
-                    0 => self.state.dsp.master_gain = (self.state.dsp.master_gain - 0.1).max(0.1),
-                    1 => self.state.dsp.low_gain = (self.state.dsp.low_gain - 0.1).max(0.1),
-                    2 => self.state.dsp.mid_gain = (self.state.dsp.mid_gain - 0.1).max(0.1),
-                    3 => self.state.dsp.high_gain = (self.state.dsp.high_gain - 0.1).max(0.1),
-                    4 => self.state.dsp.threshold = (self.state.dsp.threshold - 0.01).max(0.0),
-                    5 => self.state.dsp.attack_decay = (self.state.dsp.attack_decay - 0.05).max(0.0),
-                    6 => self.state.dsp.auto_gain = !self.state.dsp.auto_gain,
-                    _ => {}
-                }
-            }
+            Action::TuningIncreaseParam => match self.state.tuning_selected_param {
+                0 => self.state.dsp.master_gain = (self.state.dsp.master_gain + 0.1).min(4.0),
+                1 => self.state.dsp.low_gain = (self.state.dsp.low_gain + 0.1).min(4.0),
+                2 => self.state.dsp.mid_gain = (self.state.dsp.mid_gain + 0.1).min(4.0),
+                3 => self.state.dsp.high_gain = (self.state.dsp.high_gain + 0.1).min(4.0),
+                4 => self.state.dsp.threshold = (self.state.dsp.threshold + 0.01).min(0.5),
+                5 => self.state.dsp.attack_decay = (self.state.dsp.attack_decay + 0.05).min(0.95),
+                6 => self.state.dsp.auto_gain = !self.state.dsp.auto_gain,
+                _ => {}
+            },
+            Action::TuningDecreaseParam => match self.state.tuning_selected_param {
+                0 => self.state.dsp.master_gain = (self.state.dsp.master_gain - 0.1).max(0.1),
+                1 => self.state.dsp.low_gain = (self.state.dsp.low_gain - 0.1).max(0.1),
+                2 => self.state.dsp.mid_gain = (self.state.dsp.mid_gain - 0.1).max(0.1),
+                3 => self.state.dsp.high_gain = (self.state.dsp.high_gain - 0.1).max(0.1),
+                4 => self.state.dsp.threshold = (self.state.dsp.threshold - 0.01).max(0.0),
+                5 => self.state.dsp.attack_decay = (self.state.dsp.attack_decay - 0.05).max(0.0),
+                6 => self.state.dsp.auto_gain = !self.state.dsp.auto_gain,
+                _ => {}
+            },
             Action::TuningResetDefaults => {
                 self.state.dsp = crate::audio::DspSettings::default();
                 self.state.status_message = Some("Reset DSP tuning to default preset".to_string());
@@ -226,38 +257,68 @@ impl App {
             }
             Action::SelectNextVersion => {
                 if !self.state.versions.history.versions.is_empty()
-                    && self.state.versions.selected_index + 1 < self.state.versions.history.versions.len()
+                    && self.state.versions.selected_index + 1
+                        < self.state.versions.history.versions.len()
                 {
                     self.state.versions.selected_index += 1;
                 }
             }
             Action::RollbackToSelectedVersion => {
-                if let Some(v_meta) = self.state.versions.history.versions.get(self.state.versions.selected_index) {
+                if let Some(v_meta) = self
+                    .state
+                    .versions
+                    .history
+                    .versions
+                    .get(self.state.versions.selected_index)
+                {
                     return Some(Action::RollbackToVersion(v_meta.version));
                 }
             }
             Action::RollbackToVersion(v) => {
-                if let Some(v_meta) = self.state.versions.history.versions.iter().find(|m| m.version == v).cloned() {
-                    if let Ok(content) = self.history_manager.load_sketch_content(&v_meta.sketch_file) {
-                        self.state.preview.sketch_source = content;
-                        self.state.prompt.active_prompt = v_meta.prompt.clone();
-                        self.state.prompt.current_version = v_meta.version;
-                        self.state.preview.sketch_name = format!("sketch_v{}", v_meta.version);
-                        self.state.preview.status = PreviewStatus::Ready;
-                        self.state.mode = InputMode::Normal;
-                        self.state.versions.history.active_version = v_meta.version;
-                        let _ = self.history_manager.save_history(&self.state.versions.history);
-                        self.state.status_message = Some(format!("Rolled back to visual sketch v{}", v_meta.version));
-                    }
+                if let Some(v_meta) = self
+                    .state
+                    .versions
+                    .history
+                    .versions
+                    .iter()
+                    .find(|m| m.version == v)
+                    .cloned()
+                    && let Ok(content) = self
+                        .history_manager
+                        .load_sketch_content(&v_meta.sketch_file)
+                {
+                    self.state.preview.seed = v_meta.seed;
+                    self.state.preview.sketch_source = content;
+                    self.state.prompt.active_prompt = v_meta.prompt.clone();
+                    self.state.prompt.current_version = v_meta.version;
+                    self.state.preview.sketch_name = format!("sketch_v{}", v_meta.version);
+                    self.state.preview.status = PreviewStatus::Ready;
+                    self.state.mode = InputMode::Normal;
+                    self.state.versions.history.active_version = v_meta.version;
+                    let _ = self
+                        .history_manager
+                        .save_history(&self.state.versions.history);
+                    self.state.status_message =
+                        Some(format!("Rolled back to visual sketch v{}", v_meta.version));
                 }
             }
             Action::TogglePlayback => {
+                self.playback_clock.update(
+                    Instant::now(),
+                    self.state.preview.is_playing,
+                    self.audio_player.position(),
+                );
                 self.state.preview.is_playing = !self.state.preview.is_playing;
                 if self.state.preview.is_playing {
                     self.audio_player.play();
                 } else {
                     self.audio_player.pause();
                 }
+                self.playback_clock.update(
+                    Instant::now(),
+                    self.state.preview.is_playing,
+                    self.audio_player.position(),
+                );
                 self.state.status_message = Some(if self.state.preview.is_playing {
                     "Playback: Playing".to_string()
                 } else {
@@ -321,7 +382,9 @@ impl App {
                 }
             }
             Action::PromptCursorRight => {
-                if self.state.prompt.cursor_position < self.state.prompt.input_buffer.chars().count() {
+                if self.state.prompt.cursor_position
+                    < self.state.prompt.input_buffer.chars().count()
+                {
                     self.state.prompt.cursor_position += 1;
                 }
             }
@@ -357,48 +420,49 @@ impl App {
 
                 return Some(Action::GenerationCompleted { result, prompt });
             }
-            Action::GenerationCompleted { result, prompt } => {
-                match result {
-                    Ok(new_code) => {
-                        let audio_hash = self.state.audio.path.as_ref().and_then(|p| {
-                            crate::audio::get_cache_path(p, self.state.preview.fps)
-                                .ok()
-                                .and_then(|cp| cp.file_stem().map(|s| s.to_string_lossy().to_string()))
-                        });
+            Action::GenerationCompleted { result, prompt } => match result {
+                Ok(new_code) => {
+                    let audio_hash = self.state.audio.path.as_ref().and_then(|p| {
+                        crate::audio::get_cache_path(p, self.state.preview.fps)
+                            .ok()
+                            .and_then(|cp| cp.file_stem().map(|s| s.to_string_lossy().to_string()))
+                    });
 
-                        if let Ok(meta) = self.history_manager.record_new_version(
-                            &prompt,
-                            &new_code,
-                            self.state.preview.seed,
-                            "Grain Generator",
-                            audio_hash.as_deref(),
-                        ) {
-                            if let Ok(hist) = self.history_manager.load_history() {
-                                self.state.versions.history = hist;
-                                self.state.versions.selected_index = self.state.versions.history.versions.len().saturating_sub(1);
-                            }
-                            self.state.prompt.current_version = meta.version;
-                            self.state.prompt.total_versions = self.state.versions.history.versions.len();
-                        } else {
-                            self.state.prompt.total_versions += 1;
-                            self.state.prompt.current_version = self.state.prompt.total_versions;
+                    if let Ok(meta) = self.history_manager.record_new_version(
+                        &prompt,
+                        &new_code,
+                        self.state.preview.seed,
+                        "Grain Generator",
+                        audio_hash.as_deref(),
+                    ) {
+                        if let Ok(hist) = self.history_manager.load_history() {
+                            self.state.versions.history = hist;
+                            self.state.versions.selected_index =
+                                self.state.versions.history.versions.len().saturating_sub(1);
                         }
+                        self.state.prompt.current_version = meta.version;
+                        self.state.prompt.total_versions =
+                            self.state.versions.history.versions.len();
+                    } else {
+                        self.state.prompt.total_versions += 1;
+                        self.state.prompt.current_version = self.state.prompt.total_versions;
+                    }
 
-                        self.state.preview.sketch_source = new_code;
-                        self.state.preview.sketch_name = format!("sketch_v{}", self.state.prompt.current_version);
-                        self.state.prompt.generation_status = GenerationStatus::Ready;
-                        self.state.preview.status = PreviewStatus::Ready;
-                        self.state.status_message = Some(format!(
-                            "Active visual: sketch_v{} (Prompt: \"{}\")",
-                            self.state.prompt.current_version, self.state.prompt.active_prompt
-                        ));
-                    }
-                    Err(err) => {
-                        self.state.prompt.generation_status = GenerationStatus::Failed(err.clone());
-                        self.state.status_message = Some(format!("Generation error: {}", err));
-                    }
+                    self.state.preview.sketch_source = new_code;
+                    self.state.preview.sketch_name =
+                        format!("sketch_v{}", self.state.prompt.current_version);
+                    self.state.prompt.generation_status = GenerationStatus::Ready;
+                    self.state.preview.status = PreviewStatus::Ready;
+                    self.state.status_message = Some(format!(
+                        "Active visual: sketch_v{} (Prompt: \"{}\")",
+                        self.state.prompt.current_version, self.state.prompt.active_prompt
+                    ));
                 }
-            }
+                Err(err) => {
+                    self.state.prompt.generation_status = GenerationStatus::Failed(err.clone());
+                    self.state.status_message = Some(format!("Generation error: {}", err));
+                }
+            },
             Action::EnterOpenAudio => {
                 self.state.mode = InputMode::OpeningAudio;
                 self.state.audio_input_buffer.clear();
@@ -433,34 +497,152 @@ impl App {
                 #[cfg(target_os = "linux")]
                 let _ = std::process::Command::new("xdg-open").arg(url).spawn();
                 #[cfg(target_os = "windows")]
-                let _ = std::process::Command::new("cmd").args(["/C", "start", url]).spawn();
-                self.state.status_message = Some("🌐 Opened native p5.js canvas in browser at http://localhost:3333".to_string());
+                let _ = std::process::Command::new("cmd")
+                    .args(["/C", "start", url])
+                    .spawn();
+                self.state.status_message = Some(
+                    "🌐 Opened native p5.js canvas in browser at http://localhost:3333".to_string(),
+                );
             }
             Action::SetStatusMessage(msg) => {
                 self.state.status_message = Some(msg);
             }
         }
+        self.service_preview();
         None
     }
 
-    pub fn check_and_reload_sketch_from_disk(&mut self) {
-        if let Ok(Some(path)) = self.history_manager.get_active_sketch_path() {
-            if let Ok(meta) = std::fs::metadata(&path) {
-                if let Ok(mtime) = meta.modified() {
-                    if let Some(last_mtime) = self.last_watched_mtime {
-                        if mtime > last_mtime {
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                if content != self.state.preview.sketch_source {
-                                    self.state.preview.sketch_source = content;
-                                    self.state.status_message = Some("🔥 Hot-reloaded sketch changes from disk".to_string());
-                                }
-                            }
-                            self.last_watched_mtime = Some(mtime);
-                        }
-                    } else {
-                        self.last_watched_mtime = Some(mtime);
-                    }
+    /// Input-thread work is limited to mailbox swaps and adopting ready output.
+    pub fn service_preview(&mut self) {
+        let area = crate::ui::preview_content_rect(ratatui::layout::Rect::new(
+            0,
+            0,
+            self.state.terminal_size.0,
+            self.state.terminal_size.1,
+        ));
+        let preview = &self.state.preview;
+        let signature = (
+            preview.sketch_source.clone(),
+            preview.seed,
+            preview.width,
+            preview.height,
+            area.width,
+            area.height,
+        );
+        let changed = self.preview_signature.as_ref() != Some(&signature);
+        let lifecycle_changed = self.preview_signature.as_ref().is_none_or(|previous| {
+            previous.0 != signature.0
+                || previous.1 != signature.1
+                || previous.2 != signature.2
+                || previous.3 != signature.3
+        });
+        let backwards = self
+            .requested_frame
+            .is_some_and(|frame| preview.current_frame < frame);
+        if lifecycle_changed || backwards {
+            self.preview_lifecycle = self.preview_lifecycle.wrapping_add(1);
+        }
+        if changed || backwards {
+            self.preview_revision = self.preview_revision.wrapping_add(1);
+            self.preview_signature = Some(signature);
+            self.requested_frame = None;
+        }
+        let Some(worker) = &self.preview_worker else {
+            return;
+        };
+        if let Some(completed) = worker
+            .take_completed()
+            .filter(|r| r.revision == self.preview_revision)
+        {
+            match completed.result {
+                Ok(result) => {
+                    self.state.preview.active_frame_result = Some(result);
+                    self.state.preview.runtime_error = None;
+                    self.state.preview.status = PreviewStatus::Ready;
                 }
+                Err(error) => {
+                    self.state.status_message =
+                        Some(format!("Sketch error (last valid frame retained): {error}"));
+                    self.state.preview.status = PreviewStatus::Error(error.to_string());
+                    self.state.preview.runtime_error = Some(error);
+                }
+            }
+        }
+        if area.width == 0
+            || area.height == 0
+            || (self.requested_frame == Some(self.state.preview.current_frame)
+                && self.requested_audio == Some(self.state.live_audio_features))
+        {
+            return;
+        }
+        self.requested_frame = Some(self.state.preview.current_frame);
+        self.requested_audio = Some(self.state.live_audio_features);
+        worker.submit(crate::preview::worker::RenderRequest {
+            revision: self.preview_revision,
+            lifecycle: self.preview_lifecycle,
+            source: std::sync::Arc::from(self.state.preview.sketch_source.as_str()),
+            context: crate::runtime::GrainContext {
+                width: self.state.preview.width,
+                height: self.state.preview.height,
+                seed: self.state.preview.seed,
+                frame: self.state.preview.current_frame,
+                time: self.state.preview.current_frame as f64
+                    / self.state.preview.fps.max(1) as f64,
+                audio: self.state.live_audio_features,
+            },
+            cols: area.width,
+            rows: area.height,
+        });
+    }
+
+    fn advance_playback(&mut self, now: Instant) {
+        if self.state.preview.is_playing && self.state.audio.analysis.is_some() {
+            self.audio_player.play();
+        }
+        let position = self.playback_clock.update(
+            now,
+            self.state.preview.is_playing,
+            self.audio_player.position(),
+        );
+        let absolute_frame =
+            crate::preview::clock::PlaybackClock::frame(position, self.state.preview.fps, 0);
+        let loop_index = absolute_frame
+            .checked_div(self.state.preview.total_frames)
+            .unwrap_or(0);
+        let audio_generation = self.audio_player.generation();
+        if loop_index != self.playback_loop || audio_generation != self.audio_generation {
+            // This epoch survives replacement of the request at a loop boundary.
+            self.preview_lifecycle = self.preview_lifecycle.wrapping_add(1);
+            self.preview_revision = self.preview_revision.wrapping_add(1);
+            self.requested_frame = None;
+        }
+        self.playback_loop = loop_index;
+        self.audio_generation = audio_generation;
+        self.state.preview.current_frame = crate::preview::clock::PlaybackClock::frame(
+            position,
+            self.state.preview.fps,
+            self.state.preview.total_frames,
+        );
+    }
+
+    pub fn check_and_reload_sketch_from_disk(&mut self) {
+        if let Ok(Some(path)) = self.history_manager.get_active_sketch_path()
+            && let Ok(meta) = std::fs::metadata(&path)
+            && let Ok(mtime) = meta.modified()
+        {
+            if let Some(last_mtime) = self.last_watched_mtime {
+                if mtime > last_mtime {
+                    if let Ok(content) = std::fs::read_to_string(&path)
+                        && content != self.state.preview.sketch_source
+                    {
+                        self.state.preview.sketch_source = content;
+                        self.state.status_message =
+                            Some("🔥 Hot-reloaded sketch changes from disk".to_string());
+                    }
+                    self.last_watched_mtime = Some(mtime);
+                }
+            } else {
+                self.last_watched_mtime = Some(mtime);
             }
         }
     }
@@ -537,9 +719,11 @@ impl App {
                     Some(Action::TuningDecreaseParam)
                 }
                 KeyCode::Char('r') => Some(Action::TuningResetDefaults),
-                KeyCode::Esc | KeyCode::Char('t') | KeyCode::Char('a') | KeyCode::Char('q') | KeyCode::Enter => {
-                    Some(Action::ToggleTuningModal)
-                }
+                KeyCode::Esc
+                | KeyCode::Char('t')
+                | KeyCode::Char('a')
+                | KeyCode::Char('q')
+                | KeyCode::Enter => Some(Action::ToggleTuningModal),
                 _ => None,
             },
         }
@@ -557,7 +741,13 @@ mod tests {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
         let mut app = App::with_history_manager(HistoryManager::new(temp_dir));
-        if let Some(idx) = app.state.engine.options.iter().position(|o| o.kind == EngineKind::OfflineMock) {
+        if let Some(idx) = app
+            .state
+            .engine
+            .options
+            .iter()
+            .position(|o| o.kind == EngineKind::OfflineMock)
+        {
             app.state.engine.active_index = idx;
             app.state.engine.selected_index = idx;
         }
@@ -621,7 +811,10 @@ mod tests {
     fn test_load_audio_invalid_path() {
         let mut app = create_test_app("audio_invalid");
         app.update(Action::LoadAudio(PathBuf::from("non_existent_audio.wav")));
-        assert_eq!(app.state.audio.path, Some(PathBuf::from("non_existent_audio.wav")));
+        assert_eq!(
+            app.state.audio.path,
+            Some(PathBuf::from("non_existent_audio.wav"))
+        );
         match app.state.audio.status {
             AudioStatus::Error(_) => {}
             _ => panic!("Expected audio status to be Error for non-existent file"),
@@ -635,7 +828,10 @@ mod tests {
         app.state.preview.current_frame = 0;
         app.state.preview.is_playing = true;
 
-        app.update(Action::Tick);
+        let now = Instant::now();
+        app.playback_clock = crate::preview::clock::PlaybackClock::new(now);
+        app.advance_playback(now);
+        app.advance_playback(now + std::time::Duration::from_nanos(16_666_667));
         assert_eq!(app.state.preview.current_frame, 1);
     }
 
@@ -658,6 +854,11 @@ mod tests {
         app.update(Action::ActivateSelectedEngine);
         assert_eq!(app.state.mode, InputMode::Normal);
         assert_eq!(app.state.engine.active_index, selected_idx);
-        assert!(app.state.status_message.unwrap().contains("Switched AI Engine to:"));
+        assert!(
+            app.state
+                .status_message
+                .unwrap()
+                .contains("Switched AI Engine to:")
+        );
     }
 }

@@ -40,7 +40,8 @@ pub fn generate_fixture_wav(path: &Path, duration_sec: f32) {
     for i in 0..num_samples {
         let t = i as f32 / sample_rate as f32;
         // Bass kick pulses at 2 Hz
-        let kick = (t * 2.0 * std::f32::consts::PI * 2.0).sin().powi(4) * (t * 60.0 * 2.0 * std::f32::consts::PI).sin();
+        let kick = (t * 2.0 * std::f32::consts::PI * 2.0).sin().powi(4)
+            * (t * 60.0 * 2.0 * std::f32::consts::PI).sin();
         // Mid harmonic synth wave at 440 Hz
         let mid = (t * 440.0 * 2.0 * std::f32::consts::PI).sin() * 0.4;
         // Treble hi-hat sizzle

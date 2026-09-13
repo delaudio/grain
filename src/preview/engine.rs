@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use ratatui::layout::Rect;
-use ratatui::text::Line;
 use crate::audio::AudioFeatures;
 use crate::preview::backend::{AnsiPreviewBackend, PreviewBackend, RattyTerminalBackend};
-use crate::runtime::{evaluate_frame, FrameRenderResult, GrainContext, RuntimeDiagnostic};
+use crate::runtime::{FrameRenderResult, GrainContext, RuntimeDiagnostic, evaluate_frame};
+use ratatui::layout::Rect;
+use ratatui::text::Line;
+use std::sync::Arc;
 
 pub struct PreviewEngine {
     backend: Arc<dyn PreviewBackend>,
@@ -17,8 +17,10 @@ impl Default for PreviewEngine {
 
 impl PreviewEngine {
     pub fn new() -> Self {
-        // Detect environment or default to Ratty/high-fidelity backend
-        let backend: Arc<dyn PreviewBackend> = if std::env::var("GRAIN_ANSI_ONLY").is_ok() {
+        // Both compatibility names select the same real half-block renderer.
+        let backend: Arc<dyn PreviewBackend> = if std::env::var("GRAIN_ANSI_ONLY").is_ok()
+            || std::env::var("GRAIN_PREVIEW_BACKEND").as_deref() == Ok("half-block")
+        {
             Arc::new(AnsiPreviewBackend::new())
         } else {
             Arc::new(RattyTerminalBackend::new())
@@ -46,8 +48,9 @@ impl PreviewEngine {
         area: Rect,
     ) -> Result<(FrameRenderResult, Vec<Line<'static>>), RuntimeDiagnostic> {
         let time = frame as f64 / fps.max(1) as f64;
-        let cols = area.width.saturating_sub(4).max(10);
-        let rows = area.height.saturating_sub(4).max(4);
+        // The UI supplies an already-inset content rectangle. Never pad twice.
+        let cols = area.width.max(1);
+        let rows = area.height.max(1);
 
         let ctx = GrainContext {
             width: 800,

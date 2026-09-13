@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::audio::AudioFeatures;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DspSettings {
@@ -35,10 +35,26 @@ pub fn process_features(
     // 1. Auto-Gain / Peak Normalization
     let (mut amp, mut low, mut mid, mut high) = if dsp.auto_gain {
         if let Some(peak) = peak_max {
-            let norm_amp = if peak.amplitude > 0.001 { raw.amplitude / peak.amplitude } else { raw.amplitude };
-            let norm_low = if peak.low > 0.001 { raw.low / peak.low } else { raw.low };
-            let norm_mid = if peak.mid > 0.001 { raw.mid / peak.mid } else { raw.mid };
-            let norm_high = if peak.high > 0.001 { raw.high / peak.high } else { raw.high };
+            let norm_amp = if peak.amplitude > 0.001 {
+                raw.amplitude / peak.amplitude
+            } else {
+                raw.amplitude
+            };
+            let norm_low = if peak.low > 0.001 {
+                raw.low / peak.low
+            } else {
+                raw.low
+            };
+            let norm_mid = if peak.mid > 0.001 {
+                raw.mid / peak.mid
+            } else {
+                raw.mid
+            };
+            let norm_high = if peak.high > 0.001 {
+                raw.high / peak.high
+            } else {
+                raw.high
+            };
             (norm_amp, norm_low, norm_mid, norm_high)
         } else {
             (raw.amplitude, raw.low, raw.mid, raw.high)

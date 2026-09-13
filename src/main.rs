@@ -1,20 +1,9 @@
-mod action;
-mod app;
-mod audio;
-mod cli;
-mod generator;
-mod history;
-mod preview;
-mod runtime;
-mod state;
-mod terminal;
-mod ui;
-mod web;
+use grain::{action, app, cli, terminal, ui, web};
 
-use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use crossterm::event::{self, Event};
+use std::time::{Duration, Instant};
 
 use action::Action;
 use app::App;
@@ -48,7 +37,7 @@ fn main() -> Result<()> {
     let mut terminal = init_terminal()?;
 
     let mut app = App::new();
-    app.state.preview.fps = args.fps;
+    app.state.preview.fps = args.fps.clamp(1, 120);
 
     if let Some(audio_path) = args.audio_file {
         app.load_audio(audio_path);
@@ -57,7 +46,7 @@ fn main() -> Result<()> {
     let web_state = std::sync::Arc::new(std::sync::RwLock::new(web::WebBridgeState::default()));
     let web_server = web::WebServer::start(3333, std::sync::Arc::clone(&web_state));
 
-    let tick_rate = Duration::from_millis(1000 / args.fps.max(1) as u64);
+    let tick_rate = Duration::from_secs_f64(1.0 / f64::from(app.state.preview.fps));
 
     let result = run_app(&mut terminal, &mut app, &web_server, tick_rate);
 
@@ -70,11 +59,24 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_app(terminal: &mut terminal::Tui, app: &mut App, web_server: &web::WebServer, tick_rate: Duration) -> Result<()> {
+fn run_app(
+    terminal: &mut terminal::Tui,
+    app: &mut App,
+    web_server: &web::WebServer,
+    tick_rate: Duration,
+) -> Result<()> {
     let size = terminal.size()?;
     app.update(Action::Resize(size.width, size.height));
 
+    let mut next_tick = Instant::now();
     while !app.state.should_quit {
+        let now = Instant::now();
+        if now >= next_tick {
+            app.update(Action::Tick);
+            // Skip missed deadlines instead of replaying obsolete UI ticks.
+            next_tick = now + tick_rate;
+        }
+        app.service_preview();
         // Sync state with web browser live server
         web_server.update_state(
             app.state.prompt.current_version,
@@ -87,23 +89,23 @@ fn run_app(terminal: &mut terminal::Tui, app: &mut App, web_server: &web::WebSer
 
         terminal.draw(|f| ui::render(f, &app.state))?;
 
-        if event::poll(tick_rate)? {
+        if event::poll(next_tick.saturating_duration_since(Instant::now()))? {
             match event::read()? {
                 Event::Key(key) => {
                     // Only process key press events (ignore release/repeat if supported by platform)
-                    if key.kind == event::KeyEventKind::Press {
-                        if let Some(action) = app.handle_key_event(key) {
-                            if action == Action::OpenInEditor {
-                                handle_open_in_editor(terminal, app)?;
-                            } else {
-                                let mut next_action = app.update(action);
-                                while let Some(chained) = next_action {
-                                    if chained == Action::OpenInEditor {
-                                        handle_open_in_editor(terminal, app)?;
-                                        break;
-                                    }
-                                    next_action = app.update(chained);
+                    if key.kind == event::KeyEventKind::Press
+                        && let Some(action) = app.handle_key_event(key)
+                    {
+                        if action == Action::OpenInEditor {
+                            handle_open_in_editor(terminal, app)?;
+                        } else {
+                            let mut next_action = app.update(action);
+                            while let Some(chained) = next_action {
+                                if chained == Action::OpenInEditor {
+                                    handle_open_in_editor(terminal, app)?;
+                                    break;
                                 }
+                                next_action = app.update(chained);
                             }
                         }
                     }
@@ -113,8 +115,6 @@ fn run_app(terminal: &mut terminal::Tui, app: &mut App, web_server: &web::WebSer
                 }
                 _ => {}
             }
-        } else {
-            app.update(Action::Tick);
         }
     }
 
@@ -145,7 +145,13 @@ fn handle_open_in_editor(terminal: &mut terminal::Tui, app: &mut App) -> Result<
 
     let editor_env = std::env::var("EDITOR")
         .or_else(|_| std::env::var("VISUAL"))
-        .unwrap_or_else(|_| if cfg!(windows) { "notepad".to_string() } else { "nano".to_string() });
+        .unwrap_or_else(|_| {
+            if cfg!(windows) {
+                "notepad".to_string()
+            } else {
+                "nano".to_string()
+            }
+        });
 
     let parts: Vec<&str> = editor_env.split_whitespace().collect();
     let prog = parts.first().copied().unwrap_or("nano");
@@ -168,7 +174,10 @@ fn handle_open_in_editor(terminal: &mut terminal::Tui, app: &mut App) -> Result<
         if let Ok(meta) = std::fs::metadata(&sketch_path) {
             app.last_watched_mtime = meta.modified().ok();
         }
-        app.state.status_message = Some(format!("Updated sketch from editor: {}", sketch_path.display()));
+        app.state.status_message = Some(format!(
+            "Updated sketch from editor: {}",
+            sketch_path.display()
+        ));
     }
 
     Ok(())

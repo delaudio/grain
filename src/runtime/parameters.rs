@@ -15,6 +15,9 @@ pub const MAX_PARAMETER_MAGNITUDE: f64 = 1_000_000.0;
 #[serde(transparent)]
 pub struct Parameters(BTreeMap<String, f64>);
 
+// All construction paths reject NaN, so the stored numeric equality is reflexive.
+impl Eq for Parameters {}
+
 impl Parameters {
     pub fn get(&self, name: &str) -> Option<f64> {
         self.0.get(name).copied()

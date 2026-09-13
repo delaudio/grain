@@ -78,6 +78,29 @@ impl HistoryManager {
         audio_hash: Option<&str>,
         engine: crate::runtime::engine::EngineId,
     ) -> Result<VersionMetadata> {
+        self.record_version(
+            prompt,
+            source,
+            provider,
+            audio_hash,
+            &crate::history::record::VersionInputs {
+                engine,
+                seed,
+                params: Default::default(),
+            },
+        )
+    }
+
+    pub fn record_version(
+        &self,
+        prompt: &str,
+        source: &str,
+        provider: &str,
+        audio_hash: Option<&str>,
+        inputs: &crate::history::record::VersionInputs,
+    ) -> Result<VersionMetadata> {
+        let engine = inputs.engine;
+        let seed = inputs.seed;
         self.init_dirs()?;
         let mut history = self.load_history()?;
 
@@ -108,6 +131,7 @@ impl HistoryManager {
             .unwrap_or(0);
 
         let meta = VersionMetadata {
+            params: inputs.params.clone(),
             engine,
             contract_version: crate::runtime::engine::CONTRACT_VERSION,
             version: next_version,

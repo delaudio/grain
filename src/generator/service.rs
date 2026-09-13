@@ -4,6 +4,7 @@ use crate::generator::mock::MockGenerator;
 use crate::generator::provider::SketchGenerator;
 use crate::runtime::GrainContext;
 use crate::runtime::engine::{EngineFactory, EngineId, ResetReason};
+use crate::runtime::parameters::Parameters;
 use std::sync::Arc;
 
 pub struct GenerationService {
@@ -25,8 +26,19 @@ impl GenerationService {
         prompt: &str,
         seed: u64,
     ) -> Result<String, String> {
-        let code = self.generator.generate_for_engine(engine, prompt, seed)?;
-        Self::validate_for_engine(engine, &code, seed)?;
+        self.generate_with_parameters(engine, prompt, seed, &Parameters::default())
+    }
+
+    pub fn generate_with_parameters(
+        &self,
+        engine: EngineId,
+        prompt: &str,
+        seed: u64,
+        params: &Parameters,
+    ) -> Result<String, String> {
+        let prompt = Self::parameter_prompt(prompt, params)?;
+        let code = self.generator.generate_for_engine(engine, &prompt, seed)?;
+        Self::validate_with_parameters(engine, &code, seed, params)?;
         Ok(code)
     }
 
@@ -46,16 +58,44 @@ impl GenerationService {
         current_sketch: &str,
         seed: u64,
     ) -> Result<String, String> {
+        self.revise_with_parameters(engine, prompt, current_sketch, seed, &Parameters::default())
+    }
+
+    pub fn revise_with_parameters(
+        &self,
+        engine: EngineId,
+        prompt: &str,
+        current_sketch: &str,
+        seed: u64,
+        params: &Parameters,
+    ) -> Result<String, String> {
+        let prompt = Self::parameter_prompt(prompt, params)?;
         let code = self
             .generator
-            .revise_for_engine(engine, prompt, current_sketch, seed)?;
-        Self::validate_for_engine(engine, &code, seed)?;
+            .revise_for_engine(engine, &prompt, current_sketch, seed)?;
+        Self::validate_with_parameters(engine, &code, seed, params)?;
         Ok(code)
     }
 
     pub fn validate_for_engine(engine: EngineId, code: &str, seed: u64) -> Result<(), String> {
+        Self::validate_with_parameters(engine, code, seed, &Parameters::default())
+    }
+
+    fn parameter_prompt(prompt: &str, params: &Parameters) -> Result<String, String> {
+        Ok(format!(
+            "{prompt}\n\nGrain host numeric parameters (read ctx.params in p5 or context.params in ASCII): {}",
+            serde_json::to_string(params).map_err(|error| error.to_string())?
+        ))
+    }
+
+    pub fn validate_with_parameters(
+        engine: EngineId,
+        code: &str,
+        seed: u64,
+        params: &Parameters,
+    ) -> Result<(), String> {
         let dummy_ctx = GrainContext {
-            params: Default::default(),
+            params: params.clone(),
             width: 800,
             height: 600,
             frame: 0,

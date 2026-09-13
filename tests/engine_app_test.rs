@@ -140,12 +140,14 @@ fn invalid_edits_failed_generation_and_inactive_engine_results_preserve_source()
     let version = app.state.prompt.current_version;
     assert!(!app.replace_edited_source("export function main() { return '\\x1b'; }".into()));
     app.update(Action::GenerationCompleted {
+        params: Default::default(),
         result: Err("provider failed".into()),
         prompt: "failed".into(),
         engine: EngineId::Ascii,
         seed: seed + 1,
     });
     app.update(Action::GenerationCompleted {
+        params: Default::default(),
         result: Ok("wrong engine".into()),
         prompt: "stale".into(),
         engine: EngineId::P5,
@@ -207,6 +209,7 @@ fn cross_engine_rollbacks_refresh_the_draft_restored_by_selection() {
     let first = "function setup(p) {} function draw(p) { p.background(10); }";
     let second = "function setup(p) {} function draw(p) { p.background(20); }";
     app.update(Action::GenerationCompleted {
+        params: Default::default(),
         result: Ok(first.into()),
         prompt: "first".into(),
         engine: EngineId::P5,
@@ -214,6 +217,7 @@ fn cross_engine_rollbacks_refresh_the_draft_restored_by_selection() {
     });
     let first_version = app.state.prompt.current_version;
     app.update(Action::GenerationCompleted {
+        params: Default::default(),
         result: Ok(second.into()),
         prompt: "second".into(),
         engine: EngineId::P5,

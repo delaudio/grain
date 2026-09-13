@@ -167,7 +167,11 @@ function draw(p, ctx) {{
             revised = format!("// Revised: Enlarged Scale\n{}", revised);
         } else {
             // General revision
-            revised = format!("// Revised for prompt: {}\n{}", prompt, revised);
+            let comment = prompt
+                .split(['\n', '\r', '\u{2028}', '\u{2029}'])
+                .collect::<Vec<_>>()
+                .join("\n// ");
+            revised = format!("// Revised for prompt: {}\n{}", comment, revised);
         }
 
         // Add revision timestamp / seed comment

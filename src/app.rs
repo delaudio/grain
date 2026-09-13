@@ -6,12 +6,15 @@ use std::time::{Instant, SystemTime};
 
 use crate::generator::GenerationService;
 use crate::history::HistoryManager;
+use crate::history::record::VersionInputs;
 use crate::runtime::engine::{CONTRACT_VERSION, EngineId};
+use crate::runtime::parameters::Parameters;
 
-type PreviewSignature = (String, u64, u32, u32, u16, u16, EngineId);
+type PreviewSignature = (String, u64, u32, u32, u16, u16, EngineId, Parameters);
 
 #[derive(Clone)]
 struct SketchDraft {
+    params: Parameters,
     source: String,
     seed: u64,
     prompt: String,
@@ -66,6 +69,7 @@ impl App {
                     && active_meta.runtime_contract == active_meta.engine.contract_name()
                 {
                     state.preview.seed = active_meta.seed;
+                    state.preview.params = active_meta.params.clone();
                     state.preview.engine = active_meta.engine;
                     state.selected_sketch_engine = active_meta.engine;
                     state.prompt.active_prompt = active_meta.prompt.clone();
@@ -73,10 +77,11 @@ impl App {
                         .load_sketch_content(&active_meta.sketch_file)
                         .map_err(|error| error.to_string())
                         .and_then(|code| {
-                            GenerationService::validate_for_engine(
+                            GenerationService::validate_with_parameters(
                                 active_meta.engine,
                                 &code,
                                 active_meta.seed,
+                                &active_meta.params,
                             )?;
                             Ok(code)
                         });
@@ -271,6 +276,34 @@ impl App {
                     InputMode::SelectSketchEngine
                 };
             }
+            Action::EnterParameters => {
+                self.state.parameter_input_buffer.clear();
+                self.state.mode = InputMode::EditingParameter;
+            }
+            Action::ExitParameters => self.state.mode = InputMode::Normal,
+            Action::ParameterInputChar(ch) => {
+                if !ch.is_control()
+                    && self.state.parameter_input_buffer.len() + ch.len_utf8() <= 256
+                {
+                    self.state.parameter_input_buffer.push(ch);
+                }
+            }
+            Action::ParameterBackspace => {
+                self.state.parameter_input_buffer.pop();
+            }
+            Action::CommitParameter => match self.commit_parameter() {
+                Ok(()) => self.state.mode = InputMode::Normal,
+                Err(error) => {
+                    self.state.status_message = Some(format!("Parameter not changed: {error}"))
+                }
+            },
+            Action::RestartSketch => {
+                self.preview_lifecycle = self.preview_lifecycle.wrapping_add(1);
+                self.preview_revision = self.preview_revision.wrapping_add(1);
+                self.requested_frame = None;
+                self.state.status_message =
+                    Some("Reset sketch state at the current playback position".into());
+            }
             Action::SelectSketchEngine(engine) => self.state.selected_sketch_engine = engine,
             Action::ActivateSketchEngine => {
                 if let Err(error) = self.activate_sketch_engine(self.state.selected_sketch_engine) {
@@ -360,9 +393,12 @@ impl App {
                             Some("Rollback cancelled: unsupported engine contract".into());
                         return None;
                     }
-                    if let Err(error) =
-                        GenerationService::validate_for_engine(v_meta.engine, &content, v_meta.seed)
-                    {
+                    if let Err(error) = GenerationService::validate_with_parameters(
+                        v_meta.engine,
+                        &content,
+                        v_meta.seed,
+                        &v_meta.params,
+                    ) {
                         self.state.status_message = Some(format!("Rollback cancelled: {error}"));
                         return None;
                     }
@@ -481,17 +517,19 @@ impl App {
                 let prompt = self.state.prompt.active_prompt.clone();
                 let seed = self.state.preview.seed.wrapping_add(1);
                 let engine = self.state.preview.engine;
+                let params = self.state.preview.params.clone();
                 let is_revision = self.state.prompt.total_versions > 0;
                 let current_sketch = self.state.preview.sketch_source.clone();
 
                 let service = self.state.engine.create_service_for_active();
                 let result = if is_revision {
-                    service.revise_for_engine(engine, &prompt, &current_sketch, seed)
+                    service.revise_with_parameters(engine, &prompt, &current_sketch, seed, &params)
                 } else {
-                    service.generate_for_engine(engine, &prompt, seed)
+                    service.generate_with_parameters(engine, &prompt, seed, &params)
                 };
 
                 return Some(Action::GenerationCompleted {
+                    params,
                     result,
                     prompt,
                     engine,
@@ -499,12 +537,13 @@ impl App {
                 });
             }
             Action::GenerationCompleted {
+                params,
                 result,
                 prompt,
                 engine,
                 seed,
             } => {
-                if engine != self.state.preview.engine {
+                if engine != self.state.preview.engine || params != self.state.preview.params {
                     self.state.status_message =
                         Some("Discarded generation for an inactive sketch engine".into());
                     return None;
@@ -519,13 +558,16 @@ impl App {
                                 })
                         });
 
-                        let saved = self.history_manager.record_new_version_for_engine(
+                        let saved = self.history_manager.record_version(
                             &prompt,
                             &new_code,
-                            seed,
                             "Grain Generator",
                             audio_hash.as_deref(),
-                            engine,
+                            &VersionInputs {
+                                engine,
+                                seed,
+                                params,
+                            },
                         );
                         let meta = match saved {
                             Ok(meta) => meta,
@@ -624,6 +666,7 @@ impl App {
             area.width,
             area.height,
             preview.engine,
+            preview.params.clone(),
         );
         let changed = self.preview_signature.as_ref() != Some(&signature);
         let lifecycle_changed = self.preview_signature.as_ref().is_none_or(|previous| {
@@ -680,7 +723,7 @@ impl App {
                 lifecycle: self.preview_lifecycle,
                 source: std::sync::Arc::from(self.state.preview.sketch_source.as_str()),
                 context: crate::runtime::GrainContext {
-                    params: Default::default(),
+                    params: self.state.preview.params.clone(),
                     width: self.state.preview.width,
                     height: self.state.preview.height,
                     seed: self.state.preview.seed,
@@ -745,15 +788,82 @@ impl App {
         }
     }
 
+    fn commit_parameter(&mut self) -> Result<(), String> {
+        let command = self.state.parameter_input_buffer.trim().to_string();
+        let mut params = self.state.preview.params.clone();
+        if let Some((name, value)) = command.split_once('=') {
+            let value = value
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| "Use a numeric value, for example speed=1.5")?;
+            params.set(name.trim(), value).map_err(|e| e.to_string())?;
+        } else if let Some(name) = command.strip_prefix('-') {
+            params.remove(name.trim());
+        } else {
+            return Err("Use name=value to set a parameter or -name to remove it".into());
+        }
+        if params == self.state.preview.params {
+            return Ok(());
+        }
+        GenerationService::validate_with_parameters(
+            self.state.preview.engine,
+            &self.state.preview.sketch_source,
+            self.state.preview.seed,
+            &params,
+        )?;
+        let inputs = VersionInputs {
+            engine: self.state.preview.engine,
+            seed: self.state.preview.seed,
+            params: params.clone(),
+        };
+        let audio_hash = self
+            .state
+            .versions
+            .history
+            .versions
+            .iter()
+            .find(|v| v.version == self.state.prompt.current_version)
+            .and_then(|v| v.audio_source_hash.clone());
+        let meta = self
+            .history_manager
+            .record_version(
+                &self.state.prompt.active_prompt,
+                &self.state.preview.sketch_source,
+                "Parameter change",
+                audio_hash.as_deref(),
+                &inputs,
+            )
+            .map_err(|e| e.to_string())?;
+        self.state.preview.params = params.clone();
+        self.sketch_drafts[inputs.engine.index()] = Some(SketchDraft {
+            params,
+            source: self.state.preview.sketch_source.clone(),
+            seed: inputs.seed,
+            prompt: self.state.prompt.active_prompt.clone(),
+        });
+        self.state.prompt.current_version = meta.version;
+        self.state.preview.sketch_name = format!("sketch_v{}", meta.version);
+        if let Ok(history) = self.history_manager.load_history() {
+            self.state.prompt.total_versions = history.versions.len();
+            self.state.versions.selected_index = history.versions.len().saturating_sub(1);
+            self.state.versions.history = history;
+        }
+        self.requested_frame = None;
+        self.state.status_message = Some(format!("Saved parameters in sketch_v{}", meta.version));
+        Ok(())
+    }
+
     fn adopt_version(&mut self, meta: &crate::history::record::VersionMetadata, source: String) {
         self.sketch_drafts[meta.engine.index()] = Some(SketchDraft {
             source: source.clone(),
             seed: meta.seed,
+            params: meta.params.clone(),
             prompt: meta.prompt.clone(),
         });
         self.state.preview.engine = meta.engine;
         self.state.selected_sketch_engine = meta.engine;
         self.state.preview.seed = meta.seed;
+        self.state.preview.params = meta.params.clone();
         self.state.preview.sketch_source = source;
         self.state.preview.sketch_name = format!("sketch_v{}", meta.version);
         self.state.preview.status = PreviewStatus::Ready;
@@ -805,6 +915,7 @@ impl App {
                     .load_sketch_content(&meta.sketch_file)
                     .map_err(|e| e.to_string())?,
                 seed: meta.seed,
+                params: meta.params.clone(),
                 prompt: meta.prompt.clone(),
             }
         } else {
@@ -815,39 +926,52 @@ impl App {
                 }
                 .into(),
                 seed: self.state.preview.seed,
+                params: self.state.preview.params.clone(),
                 prompt: self.state.prompt.active_prompt.clone(),
             }
         };
-        GenerationService::validate_for_engine(engine, &candidate.source, candidate.seed)?;
+        GenerationService::validate_with_parameters(
+            engine,
+            &candidate.source,
+            candidate.seed,
+            &candidate.params,
+        )?;
         let previous_engine = self.state.preview.engine;
         let previous = SketchDraft {
             source: self.state.preview.sketch_source.clone(),
             seed: self.state.preview.seed,
+            params: self.state.preview.params.clone(),
             prompt: self.state.prompt.active_prompt.clone(),
         };
         // Preserve even an unversioned or externally edited source before switching.
         let saved = self
             .history_manager
-            .record_new_version_for_engine(
+            .record_version(
                 &previous.prompt,
                 &previous.source,
-                previous.seed,
                 "Before engine switch",
                 None,
-                previous_engine,
+                &VersionInputs {
+                    engine: previous_engine,
+                    seed: previous.seed,
+                    params: previous.params.clone(),
+                },
             )
             .map_err(|e| e.to_string())?;
         self.adopt_version(&saved, previous.source.clone());
         self.sketch_drafts[previous_engine.index()] = Some(previous);
         let saved = self
             .history_manager
-            .record_new_version_for_engine(
+            .record_version(
                 &candidate.prompt,
                 &candidate.source,
-                candidate.seed,
                 "Engine switch",
                 None,
-                engine,
+                &VersionInputs {
+                    engine,
+                    seed: candidate.seed,
+                    params: candidate.params.clone(),
+                },
             )
             .map_err(|e| e.to_string())?;
         self.adopt_version(&saved, candidate.source);
@@ -859,15 +983,17 @@ impl App {
     }
 
     pub fn replace_edited_source(&mut self, source: String) -> bool {
-        match GenerationService::validate_for_engine(
+        match GenerationService::validate_with_parameters(
             self.state.preview.engine,
             &source,
             self.state.preview.seed,
+            &self.state.preview.params,
         ) {
             Ok(()) => {
                 self.sketch_drafts[self.state.preview.engine.index()] = Some(SketchDraft {
                     source: source.clone(),
                     seed: self.state.preview.seed,
+                    params: self.state.preview.params.clone(),
                     prompt: self.state.prompt.active_prompt.clone(),
                 });
                 self.state.preview.sketch_source = source;
@@ -900,9 +1026,18 @@ impl App {
                 KeyCode::Char('v') => Some(Action::ToggleVersions),
                 KeyCode::Char('m') => Some(Action::ToggleSelectModel),
                 KeyCode::Char('c') => Some(Action::ToggleSketchEngine),
+                KeyCode::Char('s') => Some(Action::EnterParameters),
+                KeyCode::Char('R') => Some(Action::RestartSketch),
                 KeyCode::Char('e') => Some(Action::OpenInEditor),
                 KeyCode::Char('b') | KeyCode::Char('w') => Some(Action::OpenInBrowser),
                 KeyCode::Char('o') => Some(Action::EnterOpenAudio),
+                _ => None,
+            },
+            InputMode::EditingParameter => match key.code {
+                KeyCode::Esc => Some(Action::ExitParameters),
+                KeyCode::Enter => Some(Action::CommitParameter),
+                KeyCode::Backspace => Some(Action::ParameterBackspace),
+                KeyCode::Char(ch) => Some(Action::ParameterInputChar(ch)),
                 _ => None,
             },
             InputMode::EditingPrompt => match key.code {

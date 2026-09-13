@@ -123,6 +123,7 @@ pub struct EngineFrame {
 /// Lifecycle events are selected by the coordinator, not by user JavaScript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetReason {
+    ParametersChanged,
     SourceChanged,
     EngineChanged,
     SeedChanged,

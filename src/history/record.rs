@@ -1,8 +1,18 @@
 use crate::runtime::engine::{EngineId, default_contract_version};
+use crate::runtime::parameters::Parameters;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VersionInputs {
+    pub engine: EngineId,
+    pub seed: u64,
+    pub params: Parameters,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VersionMetadata {
+    #[serde(default)]
+    pub params: Parameters,
     #[serde(default)]
     pub engine: EngineId,
     #[serde(default = "default_contract_version")]

@@ -217,7 +217,11 @@ impl PreviewWorker {
             .name("grain-preview".into())
             .spawn(move || {
                 let mut active: Option<Active> = None;
-                let mut failed: Option<(Identity, RuntimeDiagnostic)> = None;
+                let mut failed: Option<(
+                    Identity,
+                    crate::runtime::parameters::Parameters,
+                    RuntimeDiagnostic,
+                )> = None;
                 loop {
                     let (engine, request, target) = {
                         let (lock, wake) = &*worker_shared;
@@ -247,11 +251,21 @@ impl PreviewWorker {
                         request.rows,
                     );
                     let cache_failure = preflight.is_ok();
-                    let reason = reset_reason(active.as_ref(), &key, &request.context);
+                    let reason =
+                        reset_reason(active.as_ref(), &key, &request.context).or_else(|| {
+                            failed
+                                .as_ref()
+                                .filter(|(identity, params, _)| {
+                                    identity == &key && params != &request.context.params
+                                })
+                                .map(|_| ResetReason::ParametersChanged)
+                        });
                     let result = if let Err(error) = preflight {
                         Err(error)
-                    } else if let Some((_, error)) =
-                        failed.as_ref().filter(|(identity, _)| identity == &key)
+                    } else if let Some((_, _, error)) =
+                        failed.as_ref().filter(|(identity, params, _)| {
+                            identity == &key && params == &request.context.params
+                        })
                     {
                         Err(error.clone())
                     } else if let Some(reason) = reason {
@@ -287,7 +301,7 @@ impl PreviewWorker {
                         0
                     };
                     if cache_failure && let Err(error) = &result {
-                        failed = Some((key, error.clone()));
+                        failed = Some((key, request.context.params.clone(), error.clone()));
                     }
                     let result = result.map(|output| EngineFrame {
                         engine,

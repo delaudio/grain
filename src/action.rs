@@ -9,6 +9,9 @@ pub enum Action {
     ToggleHelp,
     ToggleVersions,
     ToggleSelectModel,
+    ToggleSketchEngine,
+    SelectSketchEngine(crate::runtime::engine::EngineId),
+    ActivateSketchEngine,
     ToggleTuningModal,
     TuningNextParam,
     TuningPrevParam,
@@ -35,6 +38,8 @@ pub enum Action {
     GenerationCompleted {
         result: Result<String, String>,
         prompt: String,
+        engine: crate::runtime::engine::EngineId,
+        seed: u64,
     },
     EnterOpenAudio,
     ExitOpenAudio,

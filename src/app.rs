@@ -4,11 +4,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 
+use crate::generator::GenerationService;
 use crate::history::HistoryManager;
+use crate::runtime::engine::{CONTRACT_VERSION, EngineId};
 
-type PreviewSignature = (String, u64, u32, u32, u16, u16);
+type PreviewSignature = (String, u64, u32, u32, u16, u16, EngineId);
+
+#[derive(Clone)]
+struct SketchDraft {
+    source: String,
+    seed: u64,
+    prompt: String,
+}
 
 pub struct App {
+    sketch_drafts: [Option<SketchDraft>; 2],
     pub state: GrainState,
     pub history_manager: HistoryManager,
     pub audio_player: crate::audio::AudioPlayer,
@@ -52,12 +62,53 @@ impl App {
                 .iter()
                 .find(|v| v.version == history.active_version)
             {
-                state.preview.seed = active_meta.seed;
-                state.prompt.active_prompt = active_meta.prompt.clone();
-                state.preview.sketch_name = format!("sketch_v{}", active_meta.version);
-                if let Ok(code) = history_manager.load_sketch_content(&active_meta.sketch_file) {
-                    state.preview.sketch_source = code;
+                if active_meta.contract_version == CONTRACT_VERSION
+                    && active_meta.runtime_contract == active_meta.engine.contract_name()
+                {
+                    state.preview.seed = active_meta.seed;
+                    state.preview.engine = active_meta.engine;
+                    state.selected_sketch_engine = active_meta.engine;
+                    state.prompt.active_prompt = active_meta.prompt.clone();
+                    let restored = history_manager
+                        .load_sketch_content(&active_meta.sketch_file)
+                        .map_err(|error| error.to_string())
+                        .and_then(|code| {
+                            GenerationService::validate_for_engine(
+                                active_meta.engine,
+                                &code,
+                                active_meta.seed,
+                            )?;
+                            Ok(code)
+                        });
+                    match restored {
+                        Ok(code) => {
+                            state.preview.sketch_name = format!("sketch_v{}", active_meta.version);
+                            state.preview.sketch_source = code;
+                        }
+                        Err(error) => {
+                            // Keep the matching engine so the original file can
+                            // still be repaired via editor/hot reload. Never
+                            // overwrite the invalid source or its history entry.
+                            state.preview.sketch_source = match active_meta.engine {
+                                EngineId::P5 => crate::runtime::template::DEFAULT_SKETCH_TEMPLATE,
+                                EngineId::Ascii => {
+                                    crate::runtime::template::DEFAULT_ASCII_SKETCH_TEMPLATE
+                                }
+                            }
+                            .into();
+                            state.preview.sketch_name =
+                                format!("recovery_{}", active_meta.engine.label());
+                            state.prompt.current_version = 0;
+                            state.status_message = Some(format!(
+                                "Cannot restore sketch: {error}. Using recovery template; original file unchanged."
+                            ));
+                        }
+                    }
                     state.preview.status = PreviewStatus::Ready;
+                } else {
+                    state.prompt.current_version = 0;
+                    state.status_message =
+                        Some("Cannot restore sketch: unsupported engine contract".into());
                 }
                 let p = history_manager.get_sketch_path(&active_meta.sketch_file);
                 if let Ok(meta) = std::fs::metadata(&p) {
@@ -74,6 +125,7 @@ impl App {
             }
         };
         Self {
+            sketch_drafts: [None, None],
             state,
             history_manager,
             audio_player: crate::audio::AudioPlayer::new(),
@@ -211,6 +263,20 @@ impl App {
                     }
                 };
             }
+            Action::ToggleSketchEngine => {
+                self.state.mode = if self.state.mode == InputMode::SelectSketchEngine {
+                    InputMode::Normal
+                } else {
+                    self.state.selected_sketch_engine = self.state.preview.engine;
+                    InputMode::SelectSketchEngine
+                };
+            }
+            Action::SelectSketchEngine(engine) => self.state.selected_sketch_engine = engine,
+            Action::ActivateSketchEngine => {
+                if let Err(error) = self.activate_sketch_engine(self.state.selected_sketch_engine) {
+                    self.state.status_message = Some(format!("Engine switch cancelled: {error}"));
+                }
+            }
             Action::SelectPreviousEngine => {
                 if self.state.engine.selected_index > 0 {
                     self.state.engine.selected_index -= 1;
@@ -287,17 +353,26 @@ impl App {
                         .history_manager
                         .load_sketch_content(&v_meta.sketch_file)
                 {
-                    self.state.preview.seed = v_meta.seed;
-                    self.state.preview.sketch_source = content;
-                    self.state.prompt.active_prompt = v_meta.prompt.clone();
-                    self.state.prompt.current_version = v_meta.version;
-                    self.state.preview.sketch_name = format!("sketch_v{}", v_meta.version);
-                    self.state.preview.status = PreviewStatus::Ready;
-                    self.state.mode = InputMode::Normal;
-                    self.state.versions.history.active_version = v_meta.version;
-                    let _ = self
-                        .history_manager
-                        .save_history(&self.state.versions.history);
+                    if v_meta.contract_version != CONTRACT_VERSION
+                        || v_meta.runtime_contract != v_meta.engine.contract_name()
+                    {
+                        self.state.status_message =
+                            Some("Rollback cancelled: unsupported engine contract".into());
+                        return None;
+                    }
+                    if let Err(error) =
+                        GenerationService::validate_for_engine(v_meta.engine, &content, v_meta.seed)
+                    {
+                        self.state.status_message = Some(format!("Rollback cancelled: {error}"));
+                        return None;
+                    }
+                    let mut history = self.state.versions.history.clone();
+                    history.active_version = v_meta.version;
+                    if let Err(error) = self.history_manager.save_history(&history) {
+                        self.state.status_message = Some(format!("Rollback not saved: {error}"));
+                        return None;
+                    }
+                    self.adopt_version(&v_meta, content);
                     self.state.status_message =
                         Some(format!("Rolled back to visual sketch v{}", v_meta.version));
                 }
@@ -397,9 +472,6 @@ impl App {
                 return Some(Action::TriggerGenerate);
             }
             Action::TriggerGenerate => {
-                self.state.preview.is_playing = true;
-                self.audio_player.play();
-                self.state.preview.seed = self.state.preview.seed.wrapping_add(1);
                 self.state.prompt.generation_status = GenerationStatus::Generating;
                 self.state.status_message = Some(format!(
                     "Generating audio-reactive visual via {}...",
@@ -407,62 +479,81 @@ impl App {
                 ));
 
                 let prompt = self.state.prompt.active_prompt.clone();
-                let seed = self.state.preview.seed;
+                let seed = self.state.preview.seed.wrapping_add(1);
+                let engine = self.state.preview.engine;
                 let is_revision = self.state.prompt.total_versions > 0;
                 let current_sketch = self.state.preview.sketch_source.clone();
 
                 let service = self.state.engine.create_service_for_active();
                 let result = if is_revision {
-                    service.revise_and_validate(&prompt, &current_sketch, seed)
+                    service.revise_for_engine(engine, &prompt, &current_sketch, seed)
                 } else {
-                    service.generate_and_validate(&prompt, seed)
+                    service.generate_for_engine(engine, &prompt, seed)
                 };
 
-                return Some(Action::GenerationCompleted { result, prompt });
+                return Some(Action::GenerationCompleted {
+                    result,
+                    prompt,
+                    engine,
+                    seed,
+                });
             }
-            Action::GenerationCompleted { result, prompt } => match result {
-                Ok(new_code) => {
-                    let audio_hash = self.state.audio.path.as_ref().and_then(|p| {
-                        crate::audio::get_cache_path(p, self.state.preview.fps)
-                            .ok()
-                            .and_then(|cp| cp.file_stem().map(|s| s.to_string_lossy().to_string()))
-                    });
+            Action::GenerationCompleted {
+                result,
+                prompt,
+                engine,
+                seed,
+            } => {
+                if engine != self.state.preview.engine {
+                    self.state.status_message =
+                        Some("Discarded generation for an inactive sketch engine".into());
+                    return None;
+                }
+                match result {
+                    Ok(new_code) => {
+                        let audio_hash = self.state.audio.path.as_ref().and_then(|p| {
+                            crate::audio::get_cache_path(p, self.state.preview.fps)
+                                .ok()
+                                .and_then(|cp| {
+                                    cp.file_stem().map(|s| s.to_string_lossy().to_string())
+                                })
+                        });
 
-                    if let Ok(meta) = self.history_manager.record_new_version(
-                        &prompt,
-                        &new_code,
-                        self.state.preview.seed,
-                        "Grain Generator",
-                        audio_hash.as_deref(),
-                    ) {
-                        if let Ok(hist) = self.history_manager.load_history() {
-                            self.state.versions.history = hist;
-                            self.state.versions.selected_index =
-                                self.state.versions.history.versions.len().saturating_sub(1);
-                        }
-                        self.state.prompt.current_version = meta.version;
-                        self.state.prompt.total_versions =
-                            self.state.versions.history.versions.len();
-                    } else {
-                        self.state.prompt.total_versions += 1;
-                        self.state.prompt.current_version = self.state.prompt.total_versions;
+                        let saved = self.history_manager.record_new_version_for_engine(
+                            &prompt,
+                            &new_code,
+                            seed,
+                            "Grain Generator",
+                            audio_hash.as_deref(),
+                            engine,
+                        );
+                        let meta = match saved {
+                            Ok(meta) => meta,
+                            Err(error) => {
+                                self.state.prompt.generation_status =
+                                    GenerationStatus::Failed(error.to_string());
+                                self.state.status_message = Some(format!(
+                                    "Generation not saved; previous sketch retained: {error}"
+                                ));
+                                return None;
+                            }
+                        };
+                        self.adopt_version(&meta, new_code);
+                        self.state.preview.is_playing = true;
+                        self.audio_player.play();
+                        self.state.prompt.generation_status = GenerationStatus::Ready;
+                        self.state.preview.status = PreviewStatus::Ready;
+                        self.state.status_message = Some(format!(
+                            "Active visual: sketch_v{} (Prompt: \"{}\")",
+                            self.state.prompt.current_version, self.state.prompt.active_prompt
+                        ));
                     }
-
-                    self.state.preview.sketch_source = new_code;
-                    self.state.preview.sketch_name =
-                        format!("sketch_v{}", self.state.prompt.current_version);
-                    self.state.prompt.generation_status = GenerationStatus::Ready;
-                    self.state.preview.status = PreviewStatus::Ready;
-                    self.state.status_message = Some(format!(
-                        "Active visual: sketch_v{} (Prompt: \"{}\")",
-                        self.state.prompt.current_version, self.state.prompt.active_prompt
-                    ));
+                    Err(err) => {
+                        self.state.prompt.generation_status = GenerationStatus::Failed(err.clone());
+                        self.state.status_message = Some(format!("Generation error: {}", err));
+                    }
                 }
-                Err(err) => {
-                    self.state.prompt.generation_status = GenerationStatus::Failed(err.clone());
-                    self.state.status_message = Some(format!("Generation error: {}", err));
-                }
-            },
+            }
             Action::EnterOpenAudio => {
                 self.state.mode = InputMode::OpeningAudio;
                 self.state.audio_input_buffer.clear();
@@ -491,6 +582,10 @@ impl App {
                 // Handled in main loop (suspends TUI, opens $EDITOR)
             }
             Action::OpenInBrowser => {
+                if self.state.preview.engine == EngineId::Ascii {
+                    self.state.status_message = Some("Native ASCII is rendered in the terminal; the browser viewer supports p5 only".into());
+                    return None;
+                }
                 let url = "http://127.0.0.1:3333";
                 #[cfg(target_os = "macos")]
                 let _ = std::process::Command::new("open").arg(url).spawn();
@@ -528,6 +623,7 @@ impl App {
             preview.height,
             area.width,
             area.height,
+            preview.engine,
         );
         let changed = self.preview_signature.as_ref() != Some(&signature);
         let lifecycle_changed = self.preview_signature.as_ref().is_none_or(|previous| {
@@ -535,6 +631,7 @@ impl App {
                 || previous.1 != signature.1
                 || previous.2 != signature.2
                 || previous.3 != signature.3
+                || previous.6 != signature.6
         });
         let backwards = self
             .requested_frame
@@ -550,10 +647,9 @@ impl App {
         let Some(worker) = &self.preview_worker else {
             return;
         };
-        if let Some(completed) = worker
-            .take_completed()
-            .filter(|r| r.revision == self.preview_revision)
-        {
+        if let Some(completed) = worker.take_completed().filter(|r| {
+            r.revision == self.preview_revision && r.engine == self.state.preview.engine
+        }) {
             match completed.result {
                 Ok(result) => {
                     self.state.preview.active_frame_result = Some(result);
@@ -577,22 +673,25 @@ impl App {
         }
         self.requested_frame = Some(self.state.preview.current_frame);
         self.requested_audio = Some(self.state.live_audio_features);
-        worker.submit(crate::preview::worker::RenderRequest {
-            revision: self.preview_revision,
-            lifecycle: self.preview_lifecycle,
-            source: std::sync::Arc::from(self.state.preview.sketch_source.as_str()),
-            context: crate::runtime::GrainContext {
-                width: self.state.preview.width,
-                height: self.state.preview.height,
-                seed: self.state.preview.seed,
-                frame: self.state.preview.current_frame,
-                time: self.state.preview.current_frame as f64
-                    / self.state.preview.fps.max(1) as f64,
-                audio: self.state.live_audio_features,
+        worker.submit_for_engine(
+            self.state.preview.engine,
+            crate::preview::worker::RenderRequest {
+                revision: self.preview_revision,
+                lifecycle: self.preview_lifecycle,
+                source: std::sync::Arc::from(self.state.preview.sketch_source.as_str()),
+                context: crate::runtime::GrainContext {
+                    width: self.state.preview.width,
+                    height: self.state.preview.height,
+                    seed: self.state.preview.seed,
+                    frame: self.state.preview.current_frame,
+                    time: self.state.preview.current_frame as f64
+                        / self.state.preview.fps.max(1) as f64,
+                    audio: self.state.live_audio_features,
+                },
+                cols: area.width,
+                rows: area.height,
             },
-            cols: area.width,
-            rows: area.height,
-        });
+        );
     }
 
     fn advance_playback(&mut self, now: Instant) {
@@ -635,14 +734,150 @@ impl App {
                     if let Ok(content) = std::fs::read_to_string(&path)
                         && content != self.state.preview.sketch_source
                     {
-                        self.state.preview.sketch_source = content;
-                        self.state.status_message =
-                            Some("🔥 Hot-reloaded sketch changes from disk".to_string());
+                        self.replace_edited_source(content);
                     }
                     self.last_watched_mtime = Some(mtime);
                 }
             } else {
                 self.last_watched_mtime = Some(mtime);
+            }
+        }
+    }
+
+    fn adopt_version(&mut self, meta: &crate::history::record::VersionMetadata, source: String) {
+        self.sketch_drafts[meta.engine.index()] = Some(SketchDraft {
+            source: source.clone(),
+            seed: meta.seed,
+            prompt: meta.prompt.clone(),
+        });
+        self.state.preview.engine = meta.engine;
+        self.state.selected_sketch_engine = meta.engine;
+        self.state.preview.seed = meta.seed;
+        self.state.preview.sketch_source = source;
+        self.state.preview.sketch_name = format!("sketch_v{}", meta.version);
+        self.state.preview.status = PreviewStatus::Ready;
+        self.state.preview.runtime_error = None;
+        self.state.preview.active_frame_result = None;
+        self.state.prompt.active_prompt = meta.prompt.clone();
+        self.state.prompt.current_version = meta.version;
+        if let Ok(history) = self.history_manager.load_history() {
+            self.state.prompt.total_versions = history.versions.len();
+            self.state.versions.selected_index = history
+                .versions
+                .iter()
+                .position(|v| v.version == meta.version)
+                .unwrap_or(0);
+            self.state.versions.history = history;
+        }
+        self.state.mode = InputMode::Normal;
+        self.preview_signature = None;
+        self.requested_frame = None;
+        self.last_watched_mtime =
+            std::fs::metadata(self.history_manager.get_sketch_path(&meta.sketch_file))
+                .ok()
+                .and_then(|meta| meta.modified().ok());
+    }
+
+    fn activate_sketch_engine(&mut self, engine: EngineId) -> Result<(), String> {
+        if engine == self.state.preview.engine {
+            self.state.mode = InputMode::Normal;
+            return Ok(());
+        }
+        let candidate = if let Some(draft) = &self.sketch_drafts[engine.index()] {
+            draft.clone()
+        } else if let Some(meta) = self
+            .state
+            .versions
+            .history
+            .versions
+            .iter()
+            .rev()
+            .find(|meta| {
+                meta.engine == engine
+                    && meta.contract_version == CONTRACT_VERSION
+                    && meta.runtime_contract == engine.contract_name()
+            })
+        {
+            SketchDraft {
+                source: self
+                    .history_manager
+                    .load_sketch_content(&meta.sketch_file)
+                    .map_err(|e| e.to_string())?,
+                seed: meta.seed,
+                prompt: meta.prompt.clone(),
+            }
+        } else {
+            SketchDraft {
+                source: match engine {
+                    EngineId::P5 => crate::runtime::template::DEFAULT_SKETCH_TEMPLATE,
+                    EngineId::Ascii => crate::runtime::template::DEFAULT_ASCII_SKETCH_TEMPLATE,
+                }
+                .into(),
+                seed: self.state.preview.seed,
+                prompt: self.state.prompt.active_prompt.clone(),
+            }
+        };
+        GenerationService::validate_for_engine(engine, &candidate.source, candidate.seed)?;
+        let previous_engine = self.state.preview.engine;
+        let previous = SketchDraft {
+            source: self.state.preview.sketch_source.clone(),
+            seed: self.state.preview.seed,
+            prompt: self.state.prompt.active_prompt.clone(),
+        };
+        // Preserve even an unversioned or externally edited source before switching.
+        let saved = self
+            .history_manager
+            .record_new_version_for_engine(
+                &previous.prompt,
+                &previous.source,
+                previous.seed,
+                "Before engine switch",
+                None,
+                previous_engine,
+            )
+            .map_err(|e| e.to_string())?;
+        self.adopt_version(&saved, previous.source.clone());
+        self.sketch_drafts[previous_engine.index()] = Some(previous);
+        let saved = self
+            .history_manager
+            .record_new_version_for_engine(
+                &candidate.prompt,
+                &candidate.source,
+                candidate.seed,
+                "Engine switch",
+                None,
+                engine,
+            )
+            .map_err(|e| e.to_string())?;
+        self.adopt_version(&saved, candidate.source);
+        self.state.status_message = Some(format!(
+            "Sketch engine: {}; previous source preserved in history",
+            engine.label()
+        ));
+        Ok(())
+    }
+
+    pub fn replace_edited_source(&mut self, source: String) -> bool {
+        match GenerationService::validate_for_engine(
+            self.state.preview.engine,
+            &source,
+            self.state.preview.seed,
+        ) {
+            Ok(()) => {
+                self.sketch_drafts[self.state.preview.engine.index()] = Some(SketchDraft {
+                    source: source.clone(),
+                    seed: self.state.preview.seed,
+                    prompt: self.state.prompt.active_prompt.clone(),
+                });
+                self.state.preview.sketch_source = source;
+                self.state.status_message = Some("Reloaded valid sketch changes from disk".into());
+                true
+            }
+            Err(error) => {
+                self.state.status_message = Some(format!(
+                    "Edited sketch rejected; previous source retained: {error}"
+                ));
+                false
             }
         }
     }
@@ -663,6 +898,7 @@ impl App {
                 KeyCode::Char('t') | KeyCode::Char('a') => Some(Action::ToggleTuningModal),
                 KeyCode::Char('v') => Some(Action::ToggleVersions),
                 KeyCode::Char('m') => Some(Action::ToggleSelectModel),
+                KeyCode::Char('c') => Some(Action::ToggleSketchEngine),
                 KeyCode::Char('e') => Some(Action::OpenInEditor),
                 KeyCode::Char('b') | KeyCode::Char('w') => Some(Action::OpenInBrowser),
                 KeyCode::Char('o') => Some(Action::EnterOpenAudio),
@@ -697,6 +933,17 @@ impl App {
                 KeyCode::Enter => Some(Action::RollbackToSelectedVersion),
                 KeyCode::Esc | KeyCode::Char('v') | KeyCode::Char('q') => {
                     Some(Action::ToggleVersions)
+                }
+                _ => None,
+            },
+            InputMode::SelectSketchEngine => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => Some(Action::SelectSketchEngine(EngineId::P5)),
+                KeyCode::Down | KeyCode::Char('j') => {
+                    Some(Action::SelectSketchEngine(EngineId::Ascii))
+                }
+                KeyCode::Enter => Some(Action::ActivateSketchEngine),
+                KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('q') => {
+                    Some(Action::ToggleSketchEngine)
                 }
                 _ => None,
             },

@@ -2,8 +2,12 @@
 
 The runtime emits terminal cells directly, not a raster image. It is available
 through `AsciiSession`, the `EngineAdapter` interface, and
-`PreviewWorker::submit_for_engine(EngineId::Ascii, request)`. Application engine
-selection and generation integration are still in progress.
+`PreviewWorker::submit_for_engine(EngineId::Ascii, request)`. In the application,
+press `c` and select ASCII; `m` still selects the independent AI provider.
+Generation, editor validation, history, and rollback use the selected engine.
+Generation is currently synchronous; background cancellation remains pending.
+The offline provider produces a fixed original study and revision markers,
+not an intelligent interpretation of arbitrary prompts.
 
 ## Sketch API
 

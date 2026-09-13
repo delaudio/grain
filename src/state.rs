@@ -9,6 +9,7 @@ pub enum InputMode {
     Help,
     Versions,
     SelectModel,
+    SelectSketchEngine,
     Tuning,
 }
 
@@ -61,6 +62,7 @@ pub enum PreviewStatus {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreviewInfo {
+    pub engine: crate::runtime::engine::EngineId,
     pub sketch_name: String,
     pub sketch_source: String,
     pub seed: u64,
@@ -78,6 +80,7 @@ pub struct PreviewInfo {
 impl Default for PreviewInfo {
     fn default() -> Self {
         Self {
+            engine: crate::runtime::engine::EngineId::P5,
             sketch_name: "initial_placeholder".to_string(),
             sketch_source: DEFAULT_SKETCH_TEMPLATE.to_string(),
             seed: 42,
@@ -138,6 +141,7 @@ pub struct VersionsState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrainState {
+    pub selected_sketch_engine: crate::runtime::engine::EngineId,
     pub should_quit: bool,
     pub mode: InputMode,
     pub audio: AudioInfo,
@@ -156,6 +160,7 @@ pub struct GrainState {
 impl Default for GrainState {
     fn default() -> Self {
         Self {
+            selected_sketch_engine: crate::runtime::engine::EngineId::P5,
             should_quit: false,
             mode: InputMode::Normal,
             audio: AudioInfo::default(),

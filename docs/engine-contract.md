@@ -2,8 +2,8 @@
 
 This contract separates a sketch engine from its AI code provider and its
 terminal presentation backend. The initial engine identifiers are `p5` and
-`ascii`. Both engines run through the shared preview worker. The application
-engine selector and engine-aware generation are still being integrated.
+`ascii`. Both engines run through the shared preview worker. Press `c` to select
+the sketch engine, independently of the AI provider selected with `m`.
 
 ## Outputs
 
@@ -44,7 +44,7 @@ session; terminal-only resampling must not reset a persistent raster canvas.
 `PreviewWorker::with_factory` accepts a trusted host factory. The default
 factory constructs bounded p5 and ASCII sessions on the worker thread.
 `submit_for_engine` selects the sketch engine independently of the AI provider;
-the legacy `submit` method remains p5 for existing application callers.
+the legacy `submit` method remains p5 for compatibility callers.
 
 The worker checks output dimensions, glyphs, and declared capabilities before
 promoting a replacement session. A failed switch retains the previous session.
@@ -68,6 +68,25 @@ New version records store `engine`, `contract_version`, and the existing
 version fields in legacy records deserialize as `p5` and `1`. Migration does not
 rewrite sketch source, seed, or version references. Unknown engine identifiers
 are rejected rather than interpreted as p5.
+
+Switching engines saves the current source before activating the target. The
+application restores a prior target draft/version when available, otherwise it
+starts from that engine's template. Selection does not translate p5 code into
+ASCII or replace the AI provider. Rollback and startup restore engine and seed;
+unsupported contract metadata is not silently interpreted as the current API.
+Startup validates source before restoring it. If a supported-engine file is
+invalid or unreadable, an unversioned recovery template for that same engine is
+shown with an error. The original file and history are left untouched so the
+editor can repair them; invalid source is never adopted merely because the
+application restarted.
+
+Generation and revision use engine-specific provider instructions and the same
+built-in adapter contract for validation. A failed generation does not advance
+the active seed or replace source. Invalid editor changes retain the previous
+in-memory source; the edited file remains available for correction. Browser
+opening is p5-only. Generation is still synchronous; cancellation and background
+generation are pending in the async-generation work. Shared sketch parameters
+are also not yet exposed through this contract.
 
 The legacy `record_new_version` API still records p5. Engine-aware callers use
 `record_new_version_for_engine`. Recording rejects malformed existing history

@@ -16,6 +16,20 @@ pub enum EngineId {
 }
 
 impl EngineId {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::P5 => "p5",
+            Self::Ascii => "ASCII",
+        }
+    }
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::P5 => 0,
+            Self::Ascii => 1,
+        }
+    }
+
     pub const fn contract_name(self) -> &'static str {
         match self {
             Self::P5 => "grain-p5-v1",

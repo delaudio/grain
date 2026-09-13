@@ -2,7 +2,8 @@ use crate::audio::AudioFeatures;
 use crate::generator::llm::LlmGenerator;
 use crate::generator::mock::MockGenerator;
 use crate::generator::provider::SketchGenerator;
-use crate::runtime::{GrainContext, evaluate_frame};
+use crate::runtime::GrainContext;
+use crate::runtime::engine::{EngineFactory, EngineId, ResetReason};
 use std::sync::Arc;
 
 pub struct GenerationService {
@@ -15,8 +16,17 @@ impl GenerationService {
     }
 
     pub fn generate_and_validate(&self, prompt: &str, seed: u64) -> Result<String, String> {
-        let code = self.generator.generate(prompt, seed)?;
-        self.validate_sketch(&code, seed)?;
+        self.generate_for_engine(EngineId::P5, prompt, seed)
+    }
+
+    pub fn generate_for_engine(
+        &self,
+        engine: EngineId,
+        prompt: &str,
+        seed: u64,
+    ) -> Result<String, String> {
+        let code = self.generator.generate_for_engine(engine, prompt, seed)?;
+        Self::validate_for_engine(engine, &code, seed)?;
         Ok(code)
     }
 
@@ -26,12 +36,24 @@ impl GenerationService {
         current_sketch: &str,
         seed: u64,
     ) -> Result<String, String> {
-        let code = self.generator.revise(prompt, current_sketch, seed)?;
-        self.validate_sketch(&code, seed)?;
+        self.revise_for_engine(EngineId::P5, prompt, current_sketch, seed)
+    }
+
+    pub fn revise_for_engine(
+        &self,
+        engine: EngineId,
+        prompt: &str,
+        current_sketch: &str,
+        seed: u64,
+    ) -> Result<String, String> {
+        let code = self
+            .generator
+            .revise_for_engine(engine, prompt, current_sketch, seed)?;
+        Self::validate_for_engine(engine, &code, seed)?;
         Ok(code)
     }
 
-    fn validate_sketch(&self, code: &str, seed: u64) -> Result<(), String> {
+    pub fn validate_for_engine(engine: EngineId, code: &str, seed: u64) -> Result<(), String> {
         let dummy_ctx = GrainContext {
             width: 800,
             height: 600,
@@ -46,7 +68,11 @@ impl GenerationService {
             },
         };
 
-        match evaluate_frame(code, &dummy_ctx, 40, 10) {
+        let result = crate::runtime::builtin::BuiltinEngineFactory
+            .create(engine, code, &dummy_ctx, ResetReason::SourceChanged)
+            .and_then(|mut adapter| adapter.render(&dummy_ctx, 40, 10))
+            .and_then(|output| output.validate());
+        match result {
             Ok(_) => Ok(()),
             Err(diag) => Err(format!(
                 "Generated sketch failed runtime validation: {}",
@@ -59,6 +85,9 @@ impl GenerationService {
 use crate::generator::agent::AgentCliGenerator;
 
 pub fn create_default_generator() -> GenerationService {
+    if std::env::var("GRAIN_OFFLINE").is_ok_and(|value| value == "1") {
+        return GenerationService::new(Arc::new(MockGenerator::new()));
+    }
     // 1. Direct custom CLI command (e.g. GRAIN_GENERATOR_CMD="claude -p" or "codex exec")
     if let Ok(cmd) = std::env::var("GRAIN_GENERATOR_CMD")
         && !cmd.trim().is_empty()

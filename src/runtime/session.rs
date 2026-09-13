@@ -133,6 +133,23 @@ impl SketchSession {
         rows: u16,
     ) -> Result<FrameRenderResult, RuntimeDiagnostic> {
         validate(context, cols, rows)?;
+        let (raster, draw_commands_count) = self.render_raster(context)?;
+        Ok(frame_result(
+            context.frame,
+            raster,
+            draw_commands_count,
+            cols,
+            rows,
+        ))
+    }
+
+    /// Render only the persistent canvas. Presentation backends decide whether
+    /// raster-to-cell conversion is needed; image backends skip it entirely.
+    pub fn render_raster(
+        &mut self,
+        context: &GrainContext,
+    ) -> Result<(RasterFrame, usize), RuntimeDiagnostic> {
+        validate(context, 1, 1)?;
         if !self.healthy {
             return Err(diagnostic("Failed sketch session must be reset"));
         }
@@ -151,13 +168,7 @@ impl SketchSession {
             && self.last_audio == Some(context.audio)
             && let Some(canvas) = &self.canvas
         {
-            return Ok(frame_result(
-                context.frame,
-                canvas.clone(),
-                self.last_draw_count,
-                cols,
-                rows,
-            ));
+            return Ok((canvas.clone(), self.last_draw_count));
         }
         // Any exception can leave user state partly mutated. Do not reuse it.
         self.healthy = false;
@@ -204,13 +215,7 @@ impl SketchSession {
         self.last_draw_count = commands.len();
         self.last_audio = Some(context.audio);
         self.healthy = true;
-        Ok(frame_result(
-            context.frame,
-            raster,
-            commands.len(),
-            cols,
-            rows,
-        ))
+        Ok((raster, commands.len()))
     }
 }
 

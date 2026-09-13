@@ -1,4 +1,5 @@
 pub mod ascii;
+pub mod builtin;
 pub mod contract;
 pub mod engine;
 pub mod raster;

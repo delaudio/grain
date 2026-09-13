@@ -1,8 +1,9 @@
 # Native ASCII engine, grain-ascii-v1
 
 The runtime emits terminal cells directly, not a raster image. It is available
-through `AsciiSession` and the `EngineAdapter` interface. Application engine
-selection, worker dispatch, and generation integration are still in progress.
+through `AsciiSession`, the `EngineAdapter` interface, and
+`PreviewWorker::submit_for_engine(EngineId::Ascii, request)`. Application engine
+selection and generation integration are still in progress.
 
 ## Sketch API
 

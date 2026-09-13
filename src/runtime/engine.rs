@@ -134,6 +134,10 @@ pub struct EngineCapabilities {
 pub trait EngineAdapter {
     fn capabilities(&self) -> EngineCapabilities;
 
+    fn draw_commands_count(&self) -> usize {
+        0
+    }
+
     fn render(
         &mut self,
         context: &GrainContext,

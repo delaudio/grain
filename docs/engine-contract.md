@@ -2,9 +2,8 @@
 
 This contract separates a sketch engine from its AI code provider and its
 terminal presentation backend. The initial engine identifiers are `p5` and
-`ascii`. The `ascii` identifier currently describes the native-cell contract;
-it does not yet enable an ASCII engine in the application. Worker dispatch,
-the engine selector, and engine-aware generation are still being integrated.
+`ascii`. Both engines run through the shared preview worker. The application
+engine selector and engine-aware generation are still being integrated.
 
 ## Outputs
 
@@ -42,8 +41,25 @@ audio, time, frame number, dimensions, and seed, plus terminal grid dimensions.
 The coordinator selects reset reasons for source changes, engine changes, seed
 changes, seeks, restarts, and canvas resizes. A factory invocation creates a new
 session; terminal-only resampling must not reset a persistent raster canvas.
-These interfaces describe the boundary; the existing p5 worker has not yet
-been replaced by the common factory.
+`PreviewWorker::with_factory` accepts a trusted host factory. The default
+factory constructs bounded p5 and ASCII sessions on the worker thread.
+`submit_for_engine` selects the sketch engine independently of the AI provider;
+the legacy `submit` method remains p5 for existing application callers.
+
+The worker checks output dimensions, glyphs, and declared capabilities before
+promoting a replacement session. A failed switch retains the previous session.
+Its mailbox holds one pending request and one completion; superseded engine or
+revision results are discarded. The host stamps frame headers from requests.
+
+`submit_raw_for_engine` selects output for image-capable backends, consumed via
+`take_engine_completed`, without terminal sampling. `submit_for_engine` selects
+terminal presentation: the worker preserves native cell values, samples raster
+frames to half-blocks once, and assembles text before publishing the result.
+`take_completed` only moves the prepared data; no conversion runs on the UI
+thread. Converting a Raw completion through `into_terminal` returns an explicit
+error instead of doing synchronous sampling. Changing presentation requires a
+new request, not a session reset. The p5 adapter calls `render_raster`, which
+never performs terminal sampling.
 
 ## History compatibility
 

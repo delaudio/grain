@@ -2,6 +2,7 @@ pub mod backend;
 pub mod clock;
 pub mod engine;
 pub mod iterm2;
+pub mod pacing;
 pub mod selection;
 pub mod worker;
 

@@ -19,6 +19,16 @@ impl InlineImage {
     /// Area-average only the presentation image, never the engine canvas. Color
     /// is composited before filtering to avoid transparent-color fringes.
     pub fn from_canvas(frame: &RasterFrame) -> Result<Self, String> {
+        Self::from_canvas_with_budget(frame, MAX_IMAGE_PIXELS)
+    }
+
+    pub fn from_canvas_with_budget(
+        frame: &RasterFrame,
+        pixel_budget: usize,
+    ) -> Result<Self, String> {
+        if !(4096..=MAX_IMAGE_PIXELS).contains(&pixel_budget) {
+            return Err("Invalid presentation pixel budget".into());
+        }
         let pixels = u64::from(frame.width) * u64::from(frame.height);
         if frame.width == 0
             || frame.height == 0
@@ -29,10 +39,10 @@ impl InlineImage {
         {
             return Err("Invalid source canvas for iTerm2".into());
         }
-        if pixels <= MAX_IMAGE_PIXELS as u64 {
+        if pixels <= pixel_budget as u64 {
             return Self::from_raster(frame);
         }
-        let scale = (MAX_IMAGE_PIXELS as f64 / pixels as f64).sqrt();
+        let scale = (pixel_budget as f64 / pixels as f64).sqrt();
         let width = ((f64::from(frame.width) * scale).floor() as u32).max(1);
         let height = ((f64::from(frame.height) * scale).floor() as u32).max(1);
         let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);

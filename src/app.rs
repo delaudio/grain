@@ -24,6 +24,10 @@ pub struct App {
     image_target: Option<(ratatui::layout::Rect, ratatui::layout::Rect)>,
     pending_image_packet: Option<Vec<u8>>,
     image_active: bool,
+    image_pixel_budget: usize,
+    image_interval: std::time::Duration,
+    next_image_request: Instant,
+    image_preparation_time: std::time::Duration,
     sketch_drafts: [Option<SketchDraft>; 2],
     pub state: GrainState,
     pub history_manager: HistoryManager,
@@ -137,6 +141,10 @@ impl App {
             image_target: None,
             pending_image_packet: None,
             image_active: false,
+            image_pixel_budget: crate::preview::iterm2::MAX_IMAGE_PIXELS,
+            image_interval: std::time::Duration::from_secs_f64(1.0 / 30.0),
+            next_image_request: Instant::now(),
+            image_preparation_time: std::time::Duration::ZERO,
             state,
             history_manager,
             audio_player: crate::audio::AudioPlayer::new(),
@@ -701,6 +709,7 @@ impl App {
             r.revision == self.preview_revision && r.engine == self.state.preview.engine
         }) {
             if let Some(Ok(packet)) = completed.image_packet.take() {
+                self.image_preparation_time = completed.preparation_time;
                 self.pending_image_packet = Some(packet);
                 self.image_active = true;
                 self.state.preview.active_frame_result = None;
@@ -734,6 +743,13 @@ impl App {
             return;
         }
         self.requested_frame = Some(self.state.preview.current_frame);
+        if self.image_target.is_some() {
+            if Instant::now() < self.next_image_request {
+                self.requested_frame = None;
+                return;
+            }
+            self.next_image_request = Instant::now() + self.image_interval;
+        }
         self.requested_audio = Some(self.state.live_audio_features);
         let request = crate::preview::worker::RenderRequest {
             revision: self.preview_revision,
@@ -753,7 +769,13 @@ impl App {
             rows: area.height,
         };
         if let Some((area, screen)) = self.image_target {
-            worker.submit_iterm2_for_engine(self.state.preview.engine, request, area, screen);
+            worker.submit_iterm2_with_budget(
+                self.state.preview.engine,
+                request,
+                area,
+                screen,
+                self.image_pixel_budget,
+            );
         } else {
             worker.submit_for_engine(self.state.preview.engine, request);
         }
@@ -765,6 +787,7 @@ impl App {
     ) {
         if target != self.image_target {
             self.image_target = target;
+            self.next_image_request = Instant::now();
             self.preview_revision = self.preview_revision.wrapping_add(1);
             self.requested_frame = None;
             self.pending_image_packet = None;
@@ -778,6 +801,24 @@ impl App {
 
     pub fn image_active(&self) -> bool {
         self.image_active
+    }
+
+    pub fn set_image_pacing(&mut self, pixels: usize, interval: std::time::Duration) {
+        let pixels = pixels.clamp(4096, crate::preview::iterm2::MAX_IMAGE_PIXELS);
+        if self.image_pixel_budget != pixels {
+            self.image_pixel_budget = pixels;
+            self.preview_revision = self.preview_revision.wrapping_add(1);
+            self.requested_frame = None;
+            self.pending_image_packet = None;
+        }
+        self.image_interval = interval.clamp(
+            std::time::Duration::from_secs_f64(1.0 / 30.0),
+            std::time::Duration::from_secs(1),
+        );
+    }
+
+    pub fn image_preparation_time(&self) -> std::time::Duration {
+        self.image_preparation_time
     }
 
     fn advance_playback(&mut self, now: Instant) {

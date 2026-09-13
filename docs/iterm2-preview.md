@@ -34,3 +34,18 @@ resize, Retina geometry, editor transitions and scrollback; measured resolution,
 CPU, frame rate and input latency; and adaptive performance under load. Terminal
 writes are currently synchronous, so bounded packet size alone does not prove
 responsive input on a slow terminal or transport.
+
+## Adaptive presentation
+
+Image requests are capped at 30 FPS independently of the audio/sketch clock.
+The load controller observes worker preparation and terminal transmission time,
+using a moving average. Under load it steps through presentation budgets of
+160,000, 80,000, 40,000, 20,000 and 10,000 pixels, with nominal rates of 30, 24,
+15, 10 and 5 FPS. Observed costs can extend the request interval up to one second.
+Quality recovers one step only after 60 sufficiently inexpensive observations.
+
+Changing the presentation budget invalidates obsolete queued image results,
+without resizing or restarting the engine canvas. Current images can remain
+visible until replacements arrive. This feedback reduces sustained pressure;
+it cannot preempt an individual blocking terminal write and is not a substitute
+for the real-terminal latency measurements above.

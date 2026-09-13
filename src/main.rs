@@ -79,6 +79,7 @@ fn run_app(
     )
     .map_err(anyhow::Error::msg)?;
     let mut shown_image_area = None;
+    let mut image_pacer = grain::preview::pacing::ImagePacer::default();
 
     let mut next_tick = Instant::now();
     while !app.state.should_quit {
@@ -99,6 +100,7 @@ fn run_app(
             && area.bottom() < screen.bottom())
         .then_some((area, screen));
         app.set_image_target(image_target);
+        app.set_image_pacing(image_pacer.pixel_budget(), image_pacer.interval());
         app.service_preview();
         let packet = app.take_image_packet();
         // Sync state with web browser live server
@@ -141,8 +143,10 @@ fn run_app(
             terminal.clear()?;
             shown_image_area = None;
         } else if let Some(packet) = packet {
+            let transmission_started = Instant::now();
             terminal.backend_mut().write_all(&packet)?;
             terminal.backend_mut().flush()?;
+            image_pacer.observe(app.image_preparation_time(), transmission_started.elapsed());
             shown_image_area = Some(area);
         }
 

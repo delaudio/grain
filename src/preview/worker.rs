@@ -33,6 +33,7 @@ pub enum OutputTarget {
     Iterm2 {
         area: ratatui::layout::Rect,
         screen: ratatui::layout::Rect,
+        pixel_budget: usize,
     },
 }
 
@@ -70,6 +71,7 @@ fn prepare_terminal(output: &FrameOutput, cols: u16, rows: u16) -> TerminalPrepa
 /// Engine output plus optional terminal presentation prepared on the worker.
 /// Requests submitted to the Raw target never perform terminal sampling.
 pub struct EngineCompletion {
+    pub preparation_time: std::time::Duration,
     /// Fully encoded off-thread. On encoding failure, terminal preparation is
     /// available as a fallback; the engine session itself remains healthy.
     pub image_packet: Option<Result<Vec<u8>, RuntimeDiagnostic>>,
@@ -318,17 +320,28 @@ impl PreviewWorker {
                         time: request.context.time,
                         output,
                     });
-                    let image_packet = if let OutputTarget::Iterm2 { area, screen } = target {
+                    let preparation_started = std::time::Instant::now();
+                    let image_packet = if let OutputTarget::Iterm2 {
+                        area,
+                        screen,
+                        pixel_budget,
+                    } = target
+                    {
                         result.as_ref().ok().and_then(|frame| match &frame.output {
                             FrameOutput::Raster(raster) => Some(
-                                crate::preview::iterm2::InlineImage::from_canvas(raster)
-                                    .and_then(|image| image.packet(area, screen))
-                                    .map_err(|message| RuntimeDiagnostic {
+                                crate::preview::iterm2::InlineImage::from_canvas_with_budget(
+                                    raster,
+                                    pixel_budget,
+                                )
+                                .and_then(|image| image.packet(area, screen))
+                                .map_err(|message| {
+                                    RuntimeDiagnostic {
                                         message,
                                         line: None,
                                         column: None,
                                         stack: None,
-                                    }),
+                                    }
+                                }),
                             ),
                             FrameOutput::Cells(_) => None,
                         })
@@ -361,6 +374,7 @@ impl PreviewWorker {
                         })
                     {
                         mailbox.completed = Some(EngineCompletion {
+                            preparation_time: preparation_started.elapsed(),
                             image_packet,
                             engine,
                             revision: request.revision,
@@ -401,7 +415,32 @@ impl PreviewWorker {
         area: ratatui::layout::Rect,
         screen: ratatui::layout::Rect,
     ) {
-        self.submit_target(engine, request, OutputTarget::Iterm2 { area, screen });
+        self.submit_iterm2_with_budget(
+            engine,
+            request,
+            area,
+            screen,
+            crate::preview::iterm2::MAX_IMAGE_PIXELS,
+        );
+    }
+
+    pub fn submit_iterm2_with_budget(
+        &self,
+        engine: EngineId,
+        request: RenderRequest,
+        area: ratatui::layout::Rect,
+        screen: ratatui::layout::Rect,
+        pixel_budget: usize,
+    ) {
+        self.submit_target(
+            engine,
+            request,
+            OutputTarget::Iterm2 {
+                area,
+                screen,
+                pixel_budget,
+            },
+        );
     }
 
     fn submit_target(&self, engine: EngineId, request: RenderRequest, target: OutputTarget) {

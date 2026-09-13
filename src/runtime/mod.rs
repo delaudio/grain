@@ -1,3 +1,4 @@
+pub mod ascii;
 pub mod contract;
 pub mod engine;
 pub mod raster;

@@ -18,6 +18,7 @@ fn request(source: &str, revision: u64, frame: usize) -> RenderRequest {
         cols: 2,
         rows: 1,
         context: GrainContext {
+            params: Default::default(),
             width: 8,
             height: 4,
             frame,

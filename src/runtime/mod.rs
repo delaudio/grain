@@ -2,6 +2,7 @@ pub mod ascii;
 pub mod builtin;
 pub mod contract;
 pub mod engine;
+pub mod parameters;
 pub mod raster;
 pub mod runner;
 pub mod session;

@@ -85,8 +85,25 @@ built-in adapter contract for validation. A failed generation does not advance
 the active seed or replace source. Invalid editor changes retain the previous
 in-memory source; the edited file remains available for correction. Browser
 opening is p5-only. Generation is still synchronous; cancellation and background
-generation are pending in the async-generation work. Shared sketch parameters
-are also not yet exposed through this contract.
+generation are pending in the async-generation work. Shared numeric parameters
+are available to runtime callers through `GrainContext.params`; application
+controls and parameter persistence in version history are not yet connected.
+
+## Shared numeric parameters
+
+Both engines receive `context.params` (p5 calls its context argument `ctx`).
+The host-side `Parameters` type accepts at most 64 values. Names are ASCII
+identifiers of 1-64 bytes, excluding `__proto__`, `constructor`, and `prototype`.
+Values must be finite and within -1,000,000 through 1,000,000. Serialization is
+ordered by name. Deserialization rejects duplicate names, invalid values, and
+excess entries; a legacy context without `params` receives an empty map.
+
+The parameter map supplied to JavaScript is frozen. Use fallback values when
+authoring a sketch before controls are connected, for example
+`const speed = context.params.speed ?? 1`. A changed parameter snapshot causes
+another render even at the same frame/time; an unchanged snapshot uses the
+cached frame. Healthy persistent sessions keep their user state and canvas
+during parameter changes. Initialization hooks are not rerun for such changes.
 
 The legacy `record_new_version` API still records p5. Engine-aware callers use
 `record_new_version_for_engine`. Recording rejects malformed existing history

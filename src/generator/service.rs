@@ -55,6 +55,7 @@ impl GenerationService {
 
     pub fn validate_for_engine(engine: EngineId, code: &str, seed: u64) -> Result<(), String> {
         let dummy_ctx = GrainContext {
+            params: Default::default(),
             width: 800,
             height: 600,
             frame: 0,

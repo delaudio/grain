@@ -70,6 +70,7 @@ pub struct SketchSession {
     last_position: Option<(usize, f64)>,
     last_draw_count: usize,
     last_audio: Option<crate::audio::AudioFeatures>,
+    last_params: Option<super::parameters::Parameters>,
     healthy: bool,
 }
 
@@ -118,6 +119,7 @@ impl SketchSession {
             last_position: None,
             last_draw_count: 0,
             last_audio: None,
+            last_params: None,
             healthy: true,
         })
     }
@@ -166,6 +168,7 @@ impl SketchSession {
         // A paused resize only resamples the existing canvas, never re-runs draw.
         if self.last_position == Some((context.frame, context.time))
             && self.last_audio == Some(context.audio)
+            && self.last_params.as_ref() == Some(&context.params)
             && let Some(canvas) = &self.canvas
         {
             return Ok((canvas.clone(), self.last_draw_count));
@@ -214,6 +217,7 @@ impl SketchSession {
         self.last_position = Some((context.frame, context.time));
         self.last_draw_count = commands.len();
         self.last_audio = Some(context.audio);
+        self.last_params = Some(context.params.clone());
         self.healthy = true;
         Ok((raster, commands.len()))
     }

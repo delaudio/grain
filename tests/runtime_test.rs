@@ -5,6 +5,7 @@ use grain::runtime::{DEFAULT_SKETCH_TEMPLATE, GrainContext, evaluate_frame};
 fn test_runtime_renders_fixture_sketch() {
     let source = include_str!("../fixtures/example_sketch.js");
     let ctx = GrainContext {
+        params: Default::default(),
         width: 800,
         height: 600,
         frame: 0,
@@ -29,6 +30,7 @@ fn test_runtime_renders_fixture_sketch() {
 #[test]
 fn test_runtime_renders_default_template() {
     let ctx = GrainContext {
+        params: Default::default(),
         width: 800,
         height: 600,
         frame: 10,
@@ -51,6 +53,7 @@ fn test_runtime_renders_default_template() {
 fn test_runtime_captures_syntax_and_runtime_errors() {
     let broken_source = "function draw(p, ctx) { p.invalidMethodName(); }";
     let ctx = GrainContext {
+        params: Default::default(),
         width: 800,
         height: 600,
         frame: 0,
@@ -71,6 +74,7 @@ fn test_runtime_captures_syntax_and_runtime_errors() {
 fn test_runtime_determinism() {
     let source = include_str!("../examples/wave_particles.js");
     let ctx = GrainContext {
+        params: Default::default(),
         width: 800,
         height: 600,
         frame: 45,
@@ -95,6 +99,7 @@ fn test_runtime_reports_sketch_source_location() {
     let source =
         "function draw(p, ctx) {\n  const value = 1;\n  throw new Error('location probe');\n}";
     let ctx = GrainContext {
+        params: Default::default(),
         width: 800,
         height: 600,
         frame: 0,

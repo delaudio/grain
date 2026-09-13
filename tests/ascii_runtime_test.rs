@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 fn context() -> GrainContext {
     GrainContext {
+        params: Default::default(),
         width: 80,
         height: 40,
         frame: 0,

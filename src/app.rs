@@ -680,6 +680,7 @@ impl App {
                 lifecycle: self.preview_lifecycle,
                 source: std::sync::Arc::from(self.state.preview.sketch_source.as_str()),
                 context: crate::runtime::GrainContext {
+                    params: Default::default(),
                     width: self.state.preview.width,
                     height: self.state.preview.height,
                     seed: self.state.preview.seed,

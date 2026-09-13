@@ -9,6 +9,7 @@ use grain::runtime::{GrainContext, evaluate_frame};
 
 fn context(frame: usize) -> GrainContext {
     GrainContext {
+        params: Default::default(),
         width: 16,
         height: 16,
         frame,

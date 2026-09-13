@@ -124,7 +124,7 @@
                 context.cols = request.cols; context.rows = request.rows;
                 context.seedText = request.seedText;
                 context.metrics = freeze({ aspect: request.aspect });
-                freeze(context.audio); freeze(context);
+                freeze(context.audio); freeze(context.params); freeze(context);
                 if (previousCols !== context.cols || previousRows !== context.rows) {
                     buffer = [];
                     for (let i = 0; i < context.cols * context.rows; i++) buffer[i] = ' ';

@@ -3,6 +3,7 @@ use grain::runtime::{GrainContext, RasterFrame, evaluate_frame};
 
 fn raster(body: &str) -> RasterFrame {
     let context = GrainContext {
+        params: Default::default(),
         width: 16,
         height: 16,
         frame: 0,

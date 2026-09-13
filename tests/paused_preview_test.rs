@@ -12,6 +12,7 @@ const SOURCE: &str =
 #[test]
 fn same_position_audio_refreshes_but_resize_alone_preserves_state() {
     let mut context = GrainContext {
+        params: Default::default(),
         width: 16,
         height: 16,
         frame: 0,

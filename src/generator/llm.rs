@@ -16,7 +16,10 @@ impl LlmGenerator {
         }
     }
 
-    fn build_system_prompt() -> &'static str {
+    fn build_system_prompt(engine: crate::runtime::engine::EngineId) -> &'static str {
+        if engine == crate::runtime::engine::EngineId::Ascii {
+            return crate::generator::provider::ASCII_CONTRACT;
+        }
         r#"You are a master creative coder and generative artist writing p5.js audio-reactive sketches for Grain.
 
 CORE CONTRACT:
@@ -80,9 +83,20 @@ Output ONLY executable JavaScript code in a ```javascript ... ``` codeblock. No 
 
 impl SketchGenerator for LlmGenerator {
     fn generate(&self, prompt: &str, seed: u64) -> Result<String, String> {
+        self.generate_for_engine(crate::runtime::engine::EngineId::P5, prompt, seed)
+    }
+
+    fn generate_for_engine(
+        &self,
+        engine: crate::runtime::engine::EngineId,
+        prompt: &str,
+        seed: u64,
+    ) -> Result<String, String> {
         let user_prompt = format!(
-            "Generate a new p5.js audio-reactive sketch for the prompt: \"{}\". Deterministic seed: {}.",
-            prompt, seed
+            "Generate a new {} audio-reactive sketch for the prompt: \"{}\". Deterministic seed: {}.",
+            engine.label(),
+            prompt,
+            seed
         );
 
         let client = reqwest::blocking::Client::builder()
@@ -93,7 +107,7 @@ impl SketchGenerator for LlmGenerator {
         let payload = json!({
             "model": self.model,
             "messages": [
-                { "role": "system", "content": Self::build_system_prompt() },
+                { "role": "system", "content": Self::build_system_prompt(engine) },
                 { "role": "user", "content": user_prompt }
             ],
             "temperature": 0.7
@@ -127,9 +141,27 @@ impl SketchGenerator for LlmGenerator {
     }
 
     fn revise(&self, prompt: &str, current_sketch: &str, seed: u64) -> Result<String, String> {
+        self.revise_for_engine(
+            crate::runtime::engine::EngineId::P5,
+            prompt,
+            current_sketch,
+            seed,
+        )
+    }
+
+    fn revise_for_engine(
+        &self,
+        engine: crate::runtime::engine::EngineId,
+        prompt: &str,
+        current_sketch: &str,
+        seed: u64,
+    ) -> Result<String, String> {
         let user_prompt = format!(
-            "Revise the following existing p5.js sketch based on user request: \"{}\". Seed: {}.\n\nExisting code:\n```javascript\n{}\n```",
-            prompt, seed, current_sketch
+            "Revise the following existing {} sketch based on user request: \"{}\". Seed: {}.\n\nExisting code:\n```javascript\n{}\n```",
+            engine.label(),
+            prompt,
+            seed,
+            current_sketch
         );
 
         let client = reqwest::blocking::Client::builder()
@@ -140,7 +172,7 @@ impl SketchGenerator for LlmGenerator {
         let payload = json!({
             "model": self.model,
             "messages": [
-                { "role": "system", "content": Self::build_system_prompt() },
+                { "role": "system", "content": Self::build_system_prompt(engine) },
                 { "role": "user", "content": user_prompt }
             ],
             "temperature": 0.7

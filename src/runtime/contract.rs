@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GrainContext {
+    #[serde(default)]
+    pub params: super::parameters::Parameters,
     pub width: u32,
     pub height: u32,
     pub frame: usize,

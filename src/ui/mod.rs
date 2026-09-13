@@ -35,6 +35,8 @@ pub fn render(frame: &mut Frame, state: &GrainState) {
         InputMode::Versions => render_versions_modal(frame, area, state),
         InputMode::OpeningAudio => render_open_audio_modal(frame, area, state),
         InputMode::SelectModel => render_model_selector_modal(frame, area, state),
+        InputMode::SelectSketchEngine => render_sketch_engine_modal(frame, area, state),
+        InputMode::EditingParameter => render_parameter_modal(frame, area, state),
         InputMode::Tuning => render_tuning_modal(frame, area, state),
         _ => {}
     }
@@ -67,6 +69,8 @@ fn render_header(frame: &mut Frame, area: Rect, state: &GrainState) {
         InputMode::Help => "HELP",
         InputMode::Versions => "VERSIONS",
         InputMode::SelectModel => "AI ENGINE SELECTOR",
+        InputMode::SelectSketchEngine => "SKETCH ENGINE SELECTOR",
+        InputMode::EditingParameter => "SKETCH PARAMETERS",
         InputMode::Tuning => "AUDIO DSP TUNING",
     };
 
@@ -77,6 +81,8 @@ fn render_header(frame: &mut Frame, area: Rect, state: &GrainState) {
         InputMode::Help => Color::Green,
         InputMode::Versions => Color::Blue,
         InputMode::SelectModel => Color::LightCyan,
+        InputMode::SelectSketchEngine => Color::LightCyan,
+        InputMode::EditingParameter => Color::Yellow,
         InputMode::Tuning => Color::Rgb(255, 180, 0),
     };
 
@@ -447,7 +453,14 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &GrainState) {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" Engine  "),
+            Span::raw(" AI  "),
+            Span::styled(
+                "c",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(" Sketch:{}  ", state.preview.engine.label())),
             Span::styled(
                 "v",
                 Style::default()
@@ -532,6 +545,12 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &GrainState) {
             ),
             Span::raw(" Close Overlay"),
         ],
+        InputMode::SelectSketchEngine => vec![Span::raw(
+            "Up/Down Select sketch engine   Enter Activate   Esc/c Cancel",
+        )],
+        InputMode::EditingParameter => {
+            vec![Span::raw("name=value or -name   Enter Save   Esc Cancel")]
+        }
         InputMode::Tuning => vec![
             Span::styled(
                 "↑/↓ / j/k",
@@ -611,6 +630,8 @@ fn render_help_modal(frame: &mut Frame, area: Rect) {
         .title(" Help & Keyboard Controls ");
 
     let text = vec![
+        Line::from("  c         Select sketch engine (p5 / native ASCII)"),
+        Line::from("  m         Select AI provider independently"),
         Line::from(Span::styled(
             "Grain — Audio-Reactive Creative Coding Instrument",
             Style::default()
@@ -729,6 +750,65 @@ fn render_help_modal(frame: &mut Frame, area: Rect) {
         .alignment(Alignment::Left);
 
     frame.render_widget(p, popup_area);
+}
+
+fn render_sketch_engine_modal(frame: &mut Frame, area: Rect, state: &GrainState) {
+    use crate::runtime::engine::EngineId;
+    let popup_area = centered_rect(75, 60, area);
+    frame.render_widget(Clear, popup_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(Color::LightCyan))
+        .title(" Sketch Engine ");
+    let mut lines = vec![
+        Line::from("Creative runtime, independent of the AI provider"),
+        Line::from(""),
+    ];
+    for (engine, description) in [
+        (
+            EngineId::P5,
+            "Persistent raster canvas; p5 setup/draw subset",
+        ),
+        (
+            EngineId::Ascii,
+            "Native characters; boot/pre/main/post hooks",
+        ),
+    ] {
+        let selected = engine == state.selected_sketch_engine;
+        let active = if engine == state.preview.engine {
+            " [ACTIVE]"
+        } else {
+            ""
+        };
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{} {}{}",
+                if selected { ">" } else { " " },
+                engine.label(),
+                active
+            ),
+            if selected {
+                Style::default().fg(Color::Black).bg(Color::LightCyan)
+            } else {
+                Style::default().fg(Color::White)
+            },
+        )));
+        lines.push(Line::from(format!("    {description}")));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(
+        "Sources are preserved in history when switching.",
+    ));
+    lines.push(Line::from(
+        "Up/Down: select   Enter: activate   Esc/c: cancel",
+    ));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        popup_area,
+    );
 }
 
 fn render_model_selector_modal(frame: &mut Frame, area: Rect, state: &GrainState) {
@@ -1155,6 +1235,43 @@ fn render_tuning_modal(frame: &mut Frame, area: Rect, state: &GrainState) {
 
     let p = Paragraph::new(text).block(Block::default());
     frame.render_widget(p, inner);
+}
+
+fn render_parameter_modal(frame: &mut Frame, area: Rect, state: &GrainState) {
+    let popup_area = centered_rect(75, 70, area);
+    frame.render_widget(Clear, popup_area);
+    let mut lines = vec![
+        Line::from("Set name=value or remove -name."),
+        Line::from("Changes retain sketch state. R resets it at the current time."),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("> {}", state.parameter_input_buffer),
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+    ];
+    let available = popup_area.height.saturating_sub(9) as usize;
+    for (name, value) in state.preview.params.iter().take(available) {
+        lines.push(Line::from(format!("{name} = {value}")));
+    }
+    if state.preview.params.iter().count() > available {
+        lines.push(Line::from(
+            "More parameters are stored than fit in this panel.",
+        ));
+    }
+    lines.push(Line::from("Enter Save   Esc Cancel"));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Double)
+                    .border_style(Style::default().fg(Color::Yellow))
+                    .title(" Sketch Parameters "),
+            )
+            .wrap(Wrap { trim: false }),
+        popup_area,
+    );
 }
 
 #[cfg(test)]

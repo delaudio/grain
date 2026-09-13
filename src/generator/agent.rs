@@ -60,7 +60,10 @@ impl AgentCliGenerator {
         }
     }
 
-    fn build_system_contract() -> &'static str {
+    fn build_system_contract(engine: crate::runtime::engine::EngineId) -> &'static str {
+        if engine == crate::runtime::engine::EngineId::Ascii {
+            return crate::generator::provider::ASCII_CONTRACT;
+        }
         r#"You are a master creative coder and generative artist writing p5.js audio-reactive sketches for Grain.
 
 CORE CONTRACT:
@@ -113,9 +116,18 @@ Output ONLY executable JavaScript code in a ```javascript ... ``` codeblock. No 
 
 impl SketchGenerator for AgentCliGenerator {
     fn generate(&self, prompt: &str, seed: u64) -> Result<String, String> {
+        self.generate_for_engine(crate::runtime::engine::EngineId::P5, prompt, seed)
+    }
+
+    fn generate_for_engine(
+        &self,
+        engine: crate::runtime::engine::EngineId,
+        prompt: &str,
+        seed: u64,
+    ) -> Result<String, String> {
         let full_prompt = format!(
             "{}\n\nUSER PROMPT: {}\nDETERMINISTIC SEED: {}",
-            Self::build_system_contract(),
+            Self::build_system_contract(engine),
             prompt,
             seed
         );
@@ -148,9 +160,24 @@ impl SketchGenerator for AgentCliGenerator {
     }
 
     fn revise(&self, prompt: &str, current_sketch: &str, seed: u64) -> Result<String, String> {
+        self.revise_for_engine(
+            crate::runtime::engine::EngineId::P5,
+            prompt,
+            current_sketch,
+            seed,
+        )
+    }
+
+    fn revise_for_engine(
+        &self,
+        engine: crate::runtime::engine::EngineId,
+        prompt: &str,
+        current_sketch: &str,
+        seed: u64,
+    ) -> Result<String, String> {
         let full_prompt = format!(
             "{}\n\nREVISION REQUEST: {}\nSEED: {}\n\nCURRENT CODE:\n```javascript\n{}\n```",
-            Self::build_system_contract(),
+            Self::build_system_contract(engine),
             prompt,
             seed,
             current_sketch

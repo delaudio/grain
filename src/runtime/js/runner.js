@@ -537,6 +537,7 @@ function run(req) {
     const sourceLineCount = req.source.split('\n').length;
     try {
       const { source, context, termCols, termRows } = req;
+      Object.freeze(context.params);
 
       const p5 = new HeadlessP5(context.width, context.height, context.seed);
 

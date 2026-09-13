@@ -127,12 +127,16 @@ fn handle_open_in_editor(terminal: &mut terminal::Tui, app: &mut App) -> Result<
         path
     } else {
         // Record initial version if none exists
-        if let Ok(meta) = app.history_manager.record_new_version(
+        if let Ok(meta) = app.history_manager.record_version(
             &app.state.prompt.active_prompt,
             &app.state.preview.sketch_source,
-            app.state.preview.seed,
             "Template",
             None,
+            &grain::history::record::VersionInputs {
+                engine: app.state.preview.engine,
+                seed: app.state.preview.seed,
+                params: app.state.preview.params.clone(),
+            },
         ) {
             app.history_manager.get_sketch_path(&meta.sketch_file)
         } else {
@@ -170,14 +174,16 @@ fn handle_open_in_editor(terminal: &mut terminal::Tui, app: &mut App) -> Result<
 
     // Reload modified code
     if let Ok(content) = std::fs::read_to_string(&sketch_path) {
-        app.state.preview.sketch_source = content;
+        let accepted = app.replace_edited_source(content);
         if let Ok(meta) = std::fs::metadata(&sketch_path) {
             app.last_watched_mtime = meta.modified().ok();
         }
-        app.state.status_message = Some(format!(
-            "Updated sketch from editor: {}",
-            sketch_path.display()
-        ));
+        if accepted {
+            app.state.status_message = Some(format!(
+                "Updated sketch from editor: {}",
+                sketch_path.display()
+            ));
+        }
     }
 
     Ok(())

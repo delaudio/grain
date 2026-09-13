@@ -3,6 +3,8 @@ function makeGrainSession(source, initialContext) {
   const stringify = JSON.stringify.bind(JSON);
   const parse = JSON.parse.bind(JSON);
   const assign = Object.assign;
+  const freeze = Object.freeze;
+  freeze(initialContext.params);
   const sourceLines = source.split('\n').length;
   const p = new HeadlessP5(initialContext.width, initialContext.height, initialContext.seed);
   const ctx = initialContext;
@@ -26,6 +28,7 @@ function makeGrainSession(source, initialContext) {
   return function(encodedContext) {
     try {
       const next = parse(encodedContext);
+      freeze(next.params);
       assign(ctx, next);
       p.frameCount = ctx.frame;
       p.deltaTime = Math.max(0, (ctx.time - previousTime) * 1000);

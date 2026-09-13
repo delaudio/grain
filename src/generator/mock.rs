@@ -10,6 +10,38 @@ impl MockGenerator {
 }
 
 impl SketchGenerator for MockGenerator {
+    fn generate_for_engine(
+        &self,
+        engine: crate::runtime::engine::EngineId,
+        prompt: &str,
+        seed: u64,
+    ) -> Result<String, String> {
+        if engine == crate::runtime::engine::EngineId::P5 {
+            return self.generate(prompt, seed);
+        }
+        Ok(format!(
+            "// Offline ASCII study, seed {seed}, prompt {}\n{}",
+            serde_json::to_string(prompt).map_err(|e| e.to_string())?,
+            crate::runtime::template::DEFAULT_ASCII_SKETCH_TEMPLATE
+        ))
+    }
+
+    fn revise_for_engine(
+        &self,
+        engine: crate::runtime::engine::EngineId,
+        prompt: &str,
+        current: &str,
+        seed: u64,
+    ) -> Result<String, String> {
+        if engine == crate::runtime::engine::EngineId::P5 {
+            return self.revise(prompt, current, seed);
+        }
+        Ok(format!(
+            "// Offline revision marker, seed {seed}, request {}\n{current}",
+            serde_json::to_string(prompt).map_err(|e| e.to_string())?
+        ))
+    }
+
     fn generate(&self, prompt: &str, seed: u64) -> Result<String, String> {
         let p_lower = prompt.to_lowercase();
 
@@ -135,7 +167,11 @@ function draw(p, ctx) {{
             revised = format!("// Revised: Enlarged Scale\n{}", revised);
         } else {
             // General revision
-            revised = format!("// Revised for prompt: {}\n{}", prompt, revised);
+            let comment = prompt
+                .split(['\n', '\r', '\u{2028}', '\u{2029}'])
+                .collect::<Vec<_>>()
+                .join("\n// ");
+            revised = format!("// Revised for prompt: {}\n{}", comment, revised);
         }
 
         // Add revision timestamp / seed comment

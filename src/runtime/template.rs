@@ -1,3 +1,18 @@
+pub const DEFAULT_ASCII_SKETCH_TEMPLATE: &str = r##"// Grain native ASCII: original typographic interference study.
+export function main(coord, context) {
+  const x = (coord.x - context.cols / 2) * context.metrics.aspect;
+  const y = coord.y - context.rows / 2;
+  const phase = Math.sin(x * 0.6 + context.time) + Math.cos(y * 0.7 - context.time);
+  const glyphs = ' .:+*#@';
+  const index = Math.min(glyphs.length - 1, Math.floor((phase + 2) * 1.5));
+  return {
+    char: glyphs[index],
+    color: [230, Math.min(255, Math.round(140 + context.audio.low * 100)), 80],
+    backgroundColor: '#101820'
+  };
+}
+"##;
+
 pub const DEFAULT_SKETCH_TEMPLATE: &str = r#"// Grain Audio-Reactive p5.js Sketch
 // Contract:
 // setup(p) - called once on initialization

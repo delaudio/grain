@@ -53,6 +53,7 @@ impl PreviewEngine {
         let rows = area.height.max(1);
 
         let ctx = GrainContext {
+            params: Default::default(),
             width: 800,
             height: 600,
             frame,

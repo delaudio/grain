@@ -59,14 +59,85 @@ impl HistoryManager {
         provider: &str,
         audio_hash: Option<&str>,
     ) -> Result<VersionMetadata> {
+        self.record_new_version_for_engine(
+            prompt,
+            source,
+            seed,
+            provider,
+            audio_hash,
+            crate::runtime::engine::EngineId::P5,
+        )
+    }
+
+    pub fn record_new_version_for_engine(
+        &self,
+        prompt: &str,
+        source: &str,
+        seed: u64,
+        provider: &str,
+        audio_hash: Option<&str>,
+        engine: crate::runtime::engine::EngineId,
+    ) -> Result<VersionMetadata> {
+        self.record_version(
+            prompt,
+            source,
+            provider,
+            audio_hash,
+            &crate::history::record::VersionInputs {
+                engine,
+                seed,
+                params: Default::default(),
+            },
+        )
+    }
+
+    pub fn record_version(
+        &self,
+        prompt: &str,
+        source: &str,
+        provider: &str,
+        audio_hash: Option<&str>,
+        inputs: &crate::history::record::VersionInputs,
+    ) -> Result<VersionMetadata> {
+        let engine = inputs.engine;
+        let seed = inputs.seed;
         self.init_dirs()?;
-        let mut history = self.load_history().unwrap_or_default();
+        let mut history = self.load_history()?;
 
-        let next_version = history.versions.len() + 1;
-        let file_name = format!("{:03}.js", next_version);
-        let sketch_path = self.sketches_dir().join(&file_name);
-
-        fs::write(&sketch_path, source)
+        let mut next_version = history
+            .versions
+            .iter()
+            .map(|v| v.version)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .context("History version counter exhausted")?;
+        use std::io::Write;
+        // An interrupted save may leave an unindexed source behind. Preserve it
+        // and reserve the next free identity atomically instead of blocking retries.
+        let (file_name, sketch_path, mut sketch_file) = loop {
+            let name = format!("{:03}.js", next_version);
+            let path = self.sketches_dir().join(&name);
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => break (name, path, file),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    next_version = next_version
+                        .checked_add(1)
+                        .context("History version counter exhausted")?;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("Failed to create sketch file: {}", path.display())
+                    });
+                }
+            }
+        };
+        sketch_file
+            .write_all(source.as_bytes())
             .with_context(|| format!("Failed to write sketch file: {}", sketch_path.display()))?;
 
         let timestamp = SystemTime::now()
@@ -75,12 +146,15 @@ impl HistoryManager {
             .unwrap_or(0);
 
         let meta = VersionMetadata {
+            params: inputs.params.clone(),
+            engine,
+            contract_version: crate::runtime::engine::CONTRACT_VERSION,
             version: next_version,
             timestamp,
             prompt: prompt.to_string(),
             seed,
             provider: provider.to_string(),
-            runtime_contract: "grain-p5-v1".to_string(),
+            runtime_contract: engine.contract_name().to_string(),
             audio_source_hash: audio_hash.map(|s| s.to_string()),
             sketch_file: file_name,
         };
@@ -97,7 +171,7 @@ impl HistoryManager {
     }
 
     pub fn get_active_sketch_path(&self) -> Result<Option<PathBuf>> {
-        let history = self.load_history().unwrap_or_default();
+        let history = self.load_history()?;
         if let Some(active) = history
             .versions
             .iter()

@@ -39,3 +39,4 @@ symphonia = { version = "0.6.1", features = ["mp3", "wav"] }
 rodio = "0.20"
 rquickjs = { version = "0.12.2", default-features = false }
 tiny-skia = "0.12.0"
+unicode-width = "0.2.2"

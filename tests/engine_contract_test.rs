@@ -142,10 +142,14 @@ fn corrupt_history_and_orphan_source_are_never_overwritten() {
     fs::remove_file(history).unwrap();
     let orphan = temp.0.join("sketches/001.js");
     fs::write(&orphan, "original").unwrap();
-    assert!(
-        manager
-            .record_new_version("test", "new", 0, "mock", None)
-            .is_err()
+    let recovered = manager
+        .record_new_version("test", "new", 0, "mock", None)
+        .unwrap();
+    assert_eq!(recovered.version, 2);
+    assert_eq!(manager.load_history().unwrap().active_version, 2);
+    assert_eq!(
+        manager.load_sketch_content(&recovered.sketch_file).unwrap(),
+        "new"
     );
     assert_eq!(fs::read_to_string(orphan).unwrap(), "original");
 }

@@ -104,7 +104,7 @@ impl HistoryManager {
         self.init_dirs()?;
         let mut history = self.load_history()?;
 
-        let next_version = history
+        let mut next_version = history
             .versions
             .iter()
             .map(|v| v.version)
@@ -112,15 +112,30 @@ impl HistoryManager {
             .unwrap_or(0)
             .checked_add(1)
             .context("History version counter exhausted")?;
-        let file_name = format!("{:03}.js", next_version);
-        let sketch_path = self.sketches_dir().join(&file_name);
-
         use std::io::Write;
-        let mut sketch_file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&sketch_path)
-            .with_context(|| format!("Failed to create sketch file: {}", sketch_path.display()))?;
+        // An interrupted save may leave an unindexed source behind. Preserve it
+        // and reserve the next free identity atomically instead of blocking retries.
+        let (file_name, sketch_path, mut sketch_file) = loop {
+            let name = format!("{:03}.js", next_version);
+            let path = self.sketches_dir().join(&name);
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => break (name, path, file),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    next_version = next_version
+                        .checked_add(1)
+                        .context("History version counter exhausted")?;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("Failed to create sketch file: {}", path.display())
+                    });
+                }
+            }
+        };
         sketch_file
             .write_all(source.as_bytes())
             .with_context(|| format!("Failed to write sketch file: {}", sketch_path.display()))?;

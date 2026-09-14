@@ -3,6 +3,7 @@ use grain::{action, app, cli, terminal, ui, web};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::event::{self, Event};
+use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};
 
 use action::Action;
@@ -68,6 +69,18 @@ fn run_app(
     let size = terminal.size()?;
     app.update(Action::Resize(size.width, size.height));
 
+    let image_backend = grain::preview::selection::iterm2_enabled(
+        std::env::var("GRAIN_PREVIEW_BACKEND").ok().as_deref(),
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+        std::env::var("TERM_PROGRAM_VERSION").ok().as_deref(),
+        std::env::var("TERM").ok().as_deref(),
+        std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some(),
+        std::io::stdout().is_terminal(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let mut shown_image_area = None;
+    let mut image_pacer = grain::preview::pacing::ImagePacer::default();
+
     let mut next_tick = Instant::now();
     while !app.state.should_quit {
         let now = Instant::now();
@@ -76,7 +89,20 @@ fn run_app(
             // Skip missed deadlines instead of replaying obsolete UI ticks.
             next_tick = now + tick_rate;
         }
+        let size = terminal.size()?;
+        let screen = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+        let area = ui::preview_content_rect(screen);
+        let image_target = (image_backend
+            && app.state.mode == grain::state::InputMode::Normal
+            && app.state.preview.engine == grain::runtime::engine::EngineId::P5
+            && area.width > 0
+            && area.height > 0
+            && area.bottom() < screen.bottom())
+        .then_some((area, screen));
+        app.set_image_target(image_target);
+        app.set_image_pacing(image_pacer.pixel_budget(), image_pacer.interval());
         app.service_preview();
+        let packet = app.take_image_packet();
         // Sync state with web browser live server
         web_server.update_state(
             app.state.prompt.current_version,
@@ -87,7 +113,42 @@ fn run_app(
             app.state.preview.current_frame,
         );
 
-        terminal.draw(|f| ui::render(f, &app.state))?;
+        if shown_image_area.is_some()
+            && (shown_image_area != image_target.map(|(area, _)| area) || !app.image_active())
+        {
+            terminal.clear()?;
+            shown_image_area = None;
+        }
+        if packet.is_some()
+            && let Some(old_area) = shown_image_area
+        {
+            let clear = grain::preview::iterm2::clear_packet(old_area, screen)
+                .map_err(anyhow::Error::msg)?;
+            terminal.backend_mut().write_all(&clear)?;
+        }
+        let mut drawn_screen = screen;
+        terminal.draw(|f| {
+            drawn_screen = f.area();
+            ui::render(f, &app.state);
+            if app.image_active() && image_target.is_some() && drawn_screen == screen {
+                f.render_widget(
+                    ratatui::widgets::Block::default()
+                        .style(ratatui::style::Style::default().bg(ratatui::style::Color::Black)),
+                    area,
+                );
+            }
+        })?;
+        if drawn_screen != screen {
+            app.set_image_target(None);
+            terminal.clear()?;
+            shown_image_area = None;
+        } else if let Some(packet) = packet {
+            let transmission_started = Instant::now();
+            terminal.backend_mut().write_all(&packet)?;
+            terminal.backend_mut().flush()?;
+            image_pacer.observe(app.image_preparation_time(), transmission_started.elapsed());
+            shown_image_area = Some(area);
+        }
 
         if event::poll(next_tick.saturating_duration_since(Instant::now()))? {
             match event::read()? {
@@ -97,11 +158,17 @@ fn run_app(
                         && let Some(action) = app.handle_key_event(key)
                     {
                         if action == Action::OpenInEditor {
+                            terminal.clear()?;
+                            shown_image_area = None;
+                            app.set_image_target(None);
                             handle_open_in_editor(terminal, app)?;
                         } else {
                             let mut next_action = app.update(action);
                             while let Some(chained) = next_action {
                                 if chained == Action::OpenInEditor {
+                                    terminal.clear()?;
+                                    shown_image_area = None;
+                                    app.set_image_target(None);
                                     handle_open_in_editor(terminal, app)?;
                                     break;
                                 }

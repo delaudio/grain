@@ -21,6 +21,13 @@ struct SketchDraft {
 }
 
 pub struct App {
+    image_target: Option<(ratatui::layout::Rect, ratatui::layout::Rect)>,
+    pending_image_packet: Option<Vec<u8>>,
+    image_active: bool,
+    image_pixel_budget: usize,
+    image_interval: std::time::Duration,
+    next_image_request: Instant,
+    image_preparation_time: std::time::Duration,
     sketch_drafts: [Option<SketchDraft>; 2],
     pub state: GrainState,
     pub history_manager: HistoryManager,
@@ -131,6 +138,13 @@ impl App {
         };
         Self {
             sketch_drafts: [None, None],
+            image_target: None,
+            pending_image_packet: None,
+            image_active: false,
+            image_pixel_budget: crate::preview::iterm2::MAX_IMAGE_PIXELS,
+            image_interval: std::time::Duration::from_secs_f64(1.0 / 30.0),
+            next_image_request: Instant::now(),
+            image_preparation_time: std::time::Duration::ZERO,
             state,
             history_manager,
             audio_player: crate::audio::AudioPlayer::new(),
@@ -683,6 +697,7 @@ impl App {
             self.preview_lifecycle = self.preview_lifecycle.wrapping_add(1);
         }
         if changed || backwards {
+            self.pending_image_packet = None;
             self.preview_revision = self.preview_revision.wrapping_add(1);
             self.preview_signature = Some(signature);
             self.requested_frame = None;
@@ -690,21 +705,34 @@ impl App {
         let Some(worker) = &self.preview_worker else {
             return;
         };
-        if let Some(completed) = worker.take_completed().filter(|r| {
+        if let Some(mut completed) = worker.take_engine_completed().filter(|r| {
             r.revision == self.preview_revision && r.engine == self.state.preview.engine
         }) {
-            match completed.result {
-                Ok(result) => {
-                    self.state.preview.active_frame_result = Some(result);
-                    self.state.preview.runtime_error = None;
-                    self.state.preview.status = PreviewStatus::Ready;
+            if let Some(Ok(packet)) = completed.image_packet.take() {
+                self.image_preparation_time = completed.preparation_time;
+                self.pending_image_packet = Some(packet);
+                self.image_active = true;
+                self.state.preview.active_frame_result = None;
+                self.state.preview.runtime_error = None;
+                self.state.preview.status = PreviewStatus::Ready;
+            } else {
+                match completed.into_terminal().result {
+                    Ok(result) => {
+                        self.image_active = false;
+                        self.state.preview.active_frame_result = Some(result);
+                        self.state.preview.runtime_error = None;
+                        self.state.preview.status = PreviewStatus::Ready;
+                    }
+                    Err(error) => {
+                        self.state.status_message =
+                            Some(format!("Sketch error (last valid frame retained): {error}"));
+                        self.state.preview.status = PreviewStatus::Error(error.to_string());
+                        self.state.preview.runtime_error = Some(error);
+                    }
                 }
-                Err(error) => {
-                    self.state.status_message =
-                        Some(format!("Sketch error (last valid frame retained): {error}"));
-                    self.state.preview.status = PreviewStatus::Error(error.to_string());
-                    self.state.preview.runtime_error = Some(error);
-                }
+            }
+            if area.width == 0 {
+                return;
             }
         }
         if area.width == 0
@@ -715,27 +743,89 @@ impl App {
             return;
         }
         self.requested_frame = Some(self.state.preview.current_frame);
+        if self.image_target.is_some() {
+            if Instant::now() < self.next_image_request {
+                self.requested_frame = None;
+                return;
+            }
+            self.next_image_request = Instant::now() + self.image_interval;
+        }
         self.requested_audio = Some(self.state.live_audio_features);
-        worker.submit_for_engine(
-            self.state.preview.engine,
-            crate::preview::worker::RenderRequest {
-                revision: self.preview_revision,
-                lifecycle: self.preview_lifecycle,
-                source: std::sync::Arc::from(self.state.preview.sketch_source.as_str()),
-                context: crate::runtime::GrainContext {
-                    params: self.state.preview.params.clone(),
-                    width: self.state.preview.width,
-                    height: self.state.preview.height,
-                    seed: self.state.preview.seed,
-                    frame: self.state.preview.current_frame,
-                    time: self.state.preview.current_frame as f64
-                        / self.state.preview.fps.max(1) as f64,
-                    audio: self.state.live_audio_features,
-                },
-                cols: area.width,
-                rows: area.height,
+        let request = crate::preview::worker::RenderRequest {
+            revision: self.preview_revision,
+            lifecycle: self.preview_lifecycle,
+            source: std::sync::Arc::from(self.state.preview.sketch_source.as_str()),
+            context: crate::runtime::GrainContext {
+                params: self.state.preview.params.clone(),
+                width: self.state.preview.width,
+                height: self.state.preview.height,
+                seed: self.state.preview.seed,
+                frame: self.state.preview.current_frame,
+                time: self.state.preview.current_frame as f64
+                    / self.state.preview.fps.max(1) as f64,
+                audio: self.state.live_audio_features,
             },
+            cols: area.width,
+            rows: area.height,
+        };
+        if let Some((area, screen)) = self.image_target {
+            worker.submit_iterm2_with_budget(
+                self.state.preview.engine,
+                request,
+                area,
+                screen,
+                self.image_pixel_budget,
+            );
+        } else {
+            worker.submit_for_engine(self.state.preview.engine, request);
+        }
+    }
+
+    pub fn set_image_target(
+        &mut self,
+        target: Option<(ratatui::layout::Rect, ratatui::layout::Rect)>,
+    ) {
+        if target != self.image_target {
+            self.image_target = target;
+            self.next_image_request = Instant::now();
+            self.preview_revision = self.preview_revision.wrapping_add(1);
+            self.requested_frame = None;
+            self.pending_image_packet = None;
+            self.image_active = false;
+        }
+    }
+
+    pub fn take_image_packet(&mut self) -> Option<Vec<u8>> {
+        self.pending_image_packet.take()
+    }
+
+    pub fn image_active(&self) -> bool {
+        self.image_active
+    }
+
+    pub fn set_image_pacing(&mut self, pixels: usize, interval: std::time::Duration) {
+        // Paused sketches produce no stream of cheap frames to recover quality.
+        // Request one full-quality still instead of retaining a degraded image.
+        let pixels = if self.state.preview.is_playing {
+            pixels.clamp(4096, crate::preview::iterm2::MAX_IMAGE_PIXELS)
+        } else {
+            crate::preview::iterm2::MAX_IMAGE_PIXELS
+        };
+        if self.image_pixel_budget != pixels {
+            self.image_pixel_budget = pixels;
+            self.next_image_request = Instant::now();
+            self.preview_revision = self.preview_revision.wrapping_add(1);
+            self.requested_frame = None;
+            self.pending_image_packet = None;
+        }
+        self.image_interval = interval.clamp(
+            std::time::Duration::from_secs_f64(1.0 / 30.0),
+            std::time::Duration::from_secs(1),
         );
+    }
+
+    pub fn image_preparation_time(&self) -> std::time::Duration {
+        self.image_preparation_time
     }
 
     fn advance_playback(&mut self, now: Instant) {

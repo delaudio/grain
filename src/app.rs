@@ -804,9 +804,16 @@ impl App {
     }
 
     pub fn set_image_pacing(&mut self, pixels: usize, interval: std::time::Duration) {
-        let pixels = pixels.clamp(4096, crate::preview::iterm2::MAX_IMAGE_PIXELS);
+        // Paused sketches produce no stream of cheap frames to recover quality.
+        // Request one full-quality still instead of retaining a degraded image.
+        let pixels = if self.state.preview.is_playing {
+            pixels.clamp(4096, crate::preview::iterm2::MAX_IMAGE_PIXELS)
+        } else {
+            crate::preview::iterm2::MAX_IMAGE_PIXELS
+        };
         if self.image_pixel_budget != pixels {
             self.image_pixel_budget = pixels;
+            self.next_image_request = Instant::now();
             self.preview_revision = self.preview_revision.wrapping_add(1);
             self.requested_frame = None;
             self.pending_image_packet = None;

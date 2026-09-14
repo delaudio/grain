@@ -44,6 +44,10 @@ using a moving average. Under load it steps through presentation budgets of
 15, 10 and 5 FPS. Observed costs can extend the request interval up to one second.
 Quality recovers one step only after 60 sufficiently inexpensive observations.
 
+Pausing bypasses the recovery counter and requests one maximum-quality still.
+The engine time and canvas remain unchanged; repeated paused renders are not
+required to restore detail.
+
 Changing the presentation budget invalidates obsolete queued image results,
 without resizing or restarting the engine canvas. Current images can remain
 visible until replacements arrive. This feedback reduces sustained pressure;

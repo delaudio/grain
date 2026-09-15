@@ -13,9 +13,10 @@ foreach ($name in $names) {
 }
 
 function Invoke-Cargo {
-    & cargo @args
+    param([string[]]$CargoArguments)
+    & cargo @CargoArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo $args failed with exit code $LASTEXITCODE"
+        throw "cargo $CargoArguments failed with exit code $LASTEXITCODE"
     }
 }
 
@@ -56,12 +57,14 @@ try {
     $env:GRAIN_PREVIEW_BACKEND = 'half-block'
 
     Set-Location $work
-    Invoke-Cargo fmt --all -- --check
-    Invoke-Cargo clippy --locked --all-targets --all-features -- -D warnings
-    Invoke-Cargo run --locked --features internal-test-fixture --bin gen_fixture
-    Invoke-Cargo test --locked --lib --bins -- --test-threads=1
-    Invoke-Cargo test --locked --tests --features internal-test-fixture -- --test-threads=1
-    Invoke-Cargo test --locked --doc
+    # Quoted array elements preserve the literal '--'; a bare separator is
+    # consumed by PowerShell when binding arguments to a function.
+    Invoke-Cargo -CargoArguments @('fmt', '--all', '--', '--check')
+    Invoke-Cargo -CargoArguments @('clippy', '--locked', '--all-targets', '--all-features', '--', '-D', 'warnings')
+    Invoke-Cargo -CargoArguments @('run', '--locked', '--features', 'internal-test-fixture', '--bin', 'gen_fixture')
+    Invoke-Cargo -CargoArguments @('test', '--locked', '--lib', '--bins', '--', '--test-threads=1')
+    Invoke-Cargo -CargoArguments @('test', '--locked', '--tests', '--features', 'internal-test-fixture', '--', '--test-threads=1')
+    Invoke-Cargo -CargoArguments @('test', '--locked', '--doc')
 } finally {
     Set-Location $originalLocation
     foreach ($name in $names) {

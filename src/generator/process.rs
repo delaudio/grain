@@ -1,5 +1,7 @@
 //! Bounded provider process execution; no reader threads can outlive a request.
+#[cfg(not(windows))]
 use super::control::GenerationControl;
+#[cfg(not(windows))]
 use std::process::{Command, Output};
 
 #[cfg(not(any(unix, windows)))]

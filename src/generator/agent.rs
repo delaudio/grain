@@ -125,6 +125,21 @@ impl SketchGenerator for AgentCliGenerator {
         prompt: &str,
         seed: u64,
     ) -> Result<String, String> {
+        self.generate_controlled(
+            engine,
+            prompt,
+            seed,
+            &super::control::GenerationControl::default(),
+        )
+    }
+
+    fn generate_controlled(
+        &self,
+        engine: crate::runtime::engine::EngineId,
+        prompt: &str,
+        seed: u64,
+        control: &super::control::GenerationControl,
+    ) -> Result<String, String> {
         let full_prompt = format!(
             "{}\n\nUSER PROMPT: {}\nDETERMINISTIC SEED: {}",
             Self::build_system_contract(engine),
@@ -138,8 +153,7 @@ impl SketchGenerator for AgentCliGenerator {
         }
         cmd.arg(&full_prompt);
 
-        let output = cmd
-            .output()
+        let output = super::process::run(&mut cmd, control)
             .map_err(|e| format!("Failed to execute agent command '{}': {}", self.command, e))?;
 
         if !output.status.success() {
@@ -175,6 +189,23 @@ impl SketchGenerator for AgentCliGenerator {
         current_sketch: &str,
         seed: u64,
     ) -> Result<String, String> {
+        self.revise_controlled(
+            engine,
+            prompt,
+            current_sketch,
+            seed,
+            &super::control::GenerationControl::default(),
+        )
+    }
+
+    fn revise_controlled(
+        &self,
+        engine: crate::runtime::engine::EngineId,
+        prompt: &str,
+        current_sketch: &str,
+        seed: u64,
+        control: &super::control::GenerationControl,
+    ) -> Result<String, String> {
         let full_prompt = format!(
             "{}\n\nREVISION REQUEST: {}\nSEED: {}\n\nCURRENT CODE:\n```javascript\n{}\n```",
             Self::build_system_contract(engine),
@@ -189,8 +220,7 @@ impl SketchGenerator for AgentCliGenerator {
         }
         cmd.arg(&full_prompt);
 
-        let output = cmd
-            .output()
+        let output = super::process::run(&mut cmd, control)
             .map_err(|e| format!("Failed to execute agent command '{}': {}", self.command, e))?;
 
         if !output.status.success() {

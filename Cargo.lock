@@ -957,6 +957,7 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "libc",
  "ratatui",
  "reqwest",
  "rodio",
@@ -968,6 +969,7 @@ dependencies = [
  "symphonia 0.6.1",
  "tiny-skia",
  "unicode-width",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

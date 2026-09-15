@@ -14,6 +14,34 @@ Make deliberate typography, geometric interference or symbol fields, not raster-
 Output only executable JavaScript, optionally in one javascript code fence."#;
 
 pub trait SketchGenerator: Send + Sync {
+    /// Legacy providers get boundary checks; interruptible providers override this.
+    fn generate_controlled(
+        &self,
+        engine: EngineId,
+        prompt: &str,
+        seed: u64,
+        control: &super::control::GenerationControl,
+    ) -> Result<String, String> {
+        control.check()?;
+        let result = self.generate_for_engine(engine, prompt, seed);
+        control.check()?;
+        result
+    }
+
+    fn revise_controlled(
+        &self,
+        engine: EngineId,
+        prompt: &str,
+        current: &str,
+        seed: u64,
+        control: &super::control::GenerationControl,
+    ) -> Result<String, String> {
+        control.check()?;
+        let result = self.revise_for_engine(engine, prompt, current, seed);
+        control.check()?;
+        result
+    }
+
     /// Generate a brand new p5.js audio-reactive sketch from a prompt.
     fn generate(&self, prompt: &str, seed: u64) -> Result<String, String>;
 

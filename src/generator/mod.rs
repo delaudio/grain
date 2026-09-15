@@ -1,6 +1,8 @@
 pub mod agent;
+pub mod control;
 pub mod llm;
 pub mod mock;
+pub(crate) mod process;
 pub mod provider;
 pub mod registry;
 pub mod service;

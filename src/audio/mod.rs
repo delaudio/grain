@@ -5,9 +5,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub mod analyzer;
+mod backend;
 pub mod decoder;
 pub mod dsp;
+#[cfg(any(windows, test))]
+mod owner_request;
 pub mod player;
+#[cfg(windows)]
+mod windows_player;
 
 pub use dsp::{DspSettings, process_features};
 pub use player::AudioPlayer;

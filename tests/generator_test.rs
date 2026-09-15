@@ -49,12 +49,29 @@ fn test_validation_rejects_broken_generated_sketch() {
 fn test_agent_cli_generator_extracts_code() {
     use grain::generator::AgentCliGenerator;
     let agent = AgentCliGenerator::new(
-        "echo".to_string(),
-        vec!["```javascript\nfunction setup(p) {}\nfunction draw(p, ctx) { p.circle(0, 0, 10); }\n```".to_string()],
+        std::env::current_exe()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string(),
+        vec![
+            "--ignored".into(),
+            "--exact".into(),
+            "cli_fixture_helper".into(),
+            "--nocapture".into(),
+        ],
     );
     let service = GenerationService::new(Arc::new(agent));
     let code = service
         .generate_and_validate("test prompt", 42)
         .expect("CLI agent generator should succeed");
     assert!(code.contains("p.circle(0, 0, 10)"));
+}
+
+#[test]
+#[ignore = "invoked as a subprocess by the CLI provider test"]
+fn cli_fixture_helper() {
+    println!(
+        "```javascript\nfunction setup(p) {{}}\nfunction draw(p, ctx) {{ p.circle(0, 0, 10); }}\n```"
+    );
 }

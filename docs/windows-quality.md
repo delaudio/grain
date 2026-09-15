@@ -19,6 +19,22 @@ by `test_agent_cli_generator_extracts_code`; it is not omitted functional covera
 
 ## Release status
 
+Windows audio backends are owned by one process-lifetime worker. CPAL's cached
+WASAPI enumerator must not outlive its original COM apartment; see
+[RustAudio/cpal#1302](https://github.com/RustAudio/cpal/issues/1302). Public player
+handles send operations to that owner and release individual backends on it.
+The idle owner remains parked until process termination, including between tests.
+Queued requests expire after five seconds and cannot mutate playback afterwards.
+Once a native operation starts, its actual result is awaited, preserving the
+previous synchronous audio contract instead of reporting a false timeout. A stuck
+native call therefore can still block its caller; audio interruption is not
+guaranteed. Native lifecycle regressions run before the
+full application suite, without disabling hardware initialization.
+Unwinding operation panics retire only the affected backend; constructor and
+destructor unwinding is contained without terminating the shared owner. Zero-fps
+seeks are rejected before dispatch. This does not catch native access violations
+or aborting panics, which remain fatal and must be treated as CI failures.
+
 Adding this job is not evidence that it passes. The first native run must succeed
 before claiming the CLI implementation is validated on Windows. Issue #51 also
 requires terminal/audio/editor/browser acceptance, release artifacts and clean

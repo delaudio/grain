@@ -62,6 +62,9 @@ try {
     Invoke-Cargo -CargoArguments @('fmt', '--all', '--', '--check')
     Invoke-Cargo -CargoArguments @('clippy', '--locked', '--all-targets', '--all-features', '--', '-D', 'warnings')
     Invoke-Cargo -CargoArguments @('run', '--locked', '--features', 'internal-test-fixture', '--bin', 'gen_fixture')
+    # Keep native process evidence separate from audio/app lifecycle failures.
+    Invoke-Cargo -CargoArguments @('test', '--locked', '--lib', 'generator::process::windows::tests::', '--', '--test-threads=1', '--nocapture')
+    Invoke-Cargo -CargoArguments @('test', '--locked', '--test', 'windows_audio_lifecycle_test', '--', '--test-threads=1', '--nocapture')
     Invoke-Cargo -CargoArguments @('test', '--locked', '--lib', '--bins', '--', '--test-threads=1')
     Invoke-Cargo -CargoArguments @('test', '--locked', '--tests', '--features', 'internal-test-fixture', '--', '--test-threads=1')
     Invoke-Cargo -CargoArguments @('test', '--locked', '--doc')
